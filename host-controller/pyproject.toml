@@ -1,0 +1,58 @@
+[tool.poetry]
+name = "exhibition-vm-controller"
+version = "0.1.0"
+description = "Framework for conservation and autonomous exhibition operation of historical digital artworks using VMs with snapshot-based error recovery"
+authors = ["Marc Schütze <mschuetze@zkm.de>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/zkmkarlsruhe/exhibition-vm-controller"
+repository = "https://github.com/zkmkarlsruhe/exhibition-vm-controller"
+keywords = ["digital-art", "conservation", "virtualization", "museum", "exhibition"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Other Audience",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: System :: Emulators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.109.0"
+uvicorn = {extras = ["standard"], version = "^0.27.0"}
+pyyaml = "^6.0.1"
+pydantic = "^2.5.0"
+pydantic-settings = "^2.1.0"
+libvirt-python = "^10.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-asyncio = "^0.21.0"
+black = "^24.0.0"
+ruff = "^0.1.0"
+mypy = "^1.8.0"
+
+[tool.poetry.scripts]
+exhibition-vm-controller = "vm_controller.api:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

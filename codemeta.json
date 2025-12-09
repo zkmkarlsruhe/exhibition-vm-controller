@@ -1,0 +1,86 @@
+{
+  "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+  "@type": "SoftwareSourceCode",
+  "name": "Exhibition VM Controller",
+  "description": "A framework for the conservation and autonomous exhibition operation of historical digital artworks using virtual machines with snapshot-based error recovery. This system combines virtualization, automated monitoring, and snapshot-based restoration to enable unattended operation of fragile, internet-dependent artworks in museum contexts.",
+  "identifier": "exhibition-vm-controller",
+  "codeRepository": "https://github.com/zkmkarlsruhe/exhibition-vm-controller",
+  "license": "https://spdx.org/licenses/MIT",
+  "version": "1.0.0",
+  "dateCreated": "2025-12-09",
+  "datePublished": "2025-12-09",
+  "dateModified": "2025-12-09",
+  "author": [
+    {
+      "@type": "Person",
+      "givenName": "Marc",
+      "familyName": "Schütze",
+      "email": "mschuetze@zkm.de",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "ZKM | Center for Art and Media Karlsruhe"
+      }
+    }
+  ],
+  "maintainer": [
+    {
+      "@type": "Person",
+      "givenName": "Marc",
+      "familyName": "Schütze",
+      "email": "mschuetze@zkm.de",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "ZKM | Center for Art and Media Karlsruhe"
+      }
+    }
+  ],
+  "contributor": [],
+  "funder": [
+    {
+      "@type": "Organization",
+      "name": "Deutsche Forschungsgemeinschaft (DFG)"
+    },
+    {
+      "@type": "Organization",
+      "name": "European Research Council (ERC)"
+    }
+  ],
+  "keywords": [
+    "digital art conservation",
+    "virtual machines",
+    "snapshot restoration",
+    "exhibition technology",
+    "browser art",
+    "software preservation",
+    "museum technology",
+    "self-healing systems",
+    "generative art",
+    "internet art",
+    "QEMU",
+    "KVM",
+    "libvirt"
+  ],
+  "programmingLanguage": [
+    "Python",
+    "AutoIt",
+    "Shell"
+  ],
+  "operatingSystem": [
+    "Linux"
+  ],
+  "softwareRequirements": [
+    "Python 3.10+",
+    "QEMU/KVM",
+    "libvirt",
+    "Poetry",
+    "Openbox",
+    "virt-viewer"
+  ],
+  "relatedLink": [],
+  "softwareHelp": "https://github.com/zkmkarlsruhe/exhibition-vm-controller/blob/main/README.md",
+  "issueTracker": "https://github.com/zkmkarlsruhe/exhibition-vm-controller/issues",
+  "readme": "https://github.com/zkmkarlsruhe/exhibition-vm-controller/blob/main/README.md",
+  "applicationCategory": "Digital Art Conservation",
+  "developmentStatus": "active",
+  "referencePublication": []
+}

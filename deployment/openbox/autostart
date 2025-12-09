@@ -1,0 +1,37 @@
+# Openbox Autostart Configuration
+# Author: Marc Schütze, ZKM | Center for Art and Media Karlsruhe
+# License: MIT
+#
+# This file configures what starts automatically when Openbox window manager launches.
+# Typical location: ~/.config/openbox/autostart
+#
+# For exhibition kiosk mode, this starts virt-viewer in fullscreen to display the VM.
+
+# Disable screen blanking and power management
+xset s off         # Disable screen saver
+xset -dpms         # Disable DPMS (Energy Star) features
+xset s noblank     # Don't blank the screen
+
+# Hide mouse cursor after inactivity (optional)
+# Requires: sudo apt-get install unclutter
+unclutter -idle 1 -root &
+
+# Start virt-viewer in kiosk mode
+# IMPORTANT: Change VM_NAME to match your libvirt VM name
+VM_NAME="your-vm-name"
+
+# Wait for VM to be fully started
+sleep 5
+
+# Launch virt-viewer in kiosk mode (fullscreen, no menus)
+virt-viewer --kiosk --full-screen --reconnect --wait "$VM_NAME" &
+
+# Alternative: If you need more control over display
+# virt-viewer --kiosk --full-screen --hotkeys=release-cursor=ctrl+alt "$VM_NAME" &
+
+# Optional: Start VNC viewer instead (if using VNC)
+# vncviewer -fullscreen localhost:5900 &
+
+# Optional: Additional monitoring or management tools
+# Can launch a lightweight terminal for emergency access (Ctrl+Alt+F2)
+# xterm -geometry 80x24+0+0 -e "bash" &

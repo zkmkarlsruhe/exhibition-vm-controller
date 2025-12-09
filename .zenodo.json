@@ -1,0 +1,76 @@
+{
+  "title": "Exhibition VM Controller: Snapshot-Based Conservation of Digital Artworks",
+  "description": "A framework for the conservation and autonomous exhibition operation of historical digital artworks using virtual machines with snapshot-based error recovery. This system combines virtualization, automated monitoring, and snapshot-based restoration to enable unattended operation of fragile, internet-dependent artworks in museum contexts. Developed at ZKM | Center for Art and Media Karlsruhe for the exhibition 'Choose Your Filter! Browser Art since the Beginnings of the World Wide Web' (February–August 2025).",
+  "creators": [
+    {
+      "name": "Schütze, Marc",
+      "affiliation": "ZKM | Center for Art and Media Karlsruhe",
+      "orcid": "0000-0000-0000-0000"
+    }
+  ],
+  "contributors": [
+    {
+      "name": "Heiss, Daniel",
+      "affiliation": "ZKM | Center for Art and Media Karlsruhe",
+      "type": "Other"
+    },
+    {
+      "name": "Vlaminck, Matthieu",
+      "affiliation": "ZKM | Center for Art and Media Karlsruhe",
+      "type": "Other"
+    },
+    {
+      "name": "Rök, Leonie",
+      "affiliation": "ZKM | Center for Art and Media Karlsruhe",
+      "type": "Other"
+    },
+    {
+      "name": "Gommel, Matthias",
+      "affiliation": "ZKM | Center for Art and Media Karlsruhe",
+      "type": "ProjectManager"
+    }
+  ],
+  "keywords": [
+    "digital art conservation",
+    "virtual machines",
+    "snapshot restoration",
+    "exhibition technology",
+    "browser art",
+    "software preservation",
+    "museum technology",
+    "self-healing systems",
+    "generative art",
+    "internet art",
+    "QEMU",
+    "KVM",
+    "libvirt",
+    "virtualization",
+    "digital heritage"
+  ],
+  "license": "MIT",
+  "upload_type": "software",
+  "access_right": "open",
+  "language": "eng",
+  "related_identifiers": [
+    {
+      "relation": "isSupplementTo",
+      "identifier": "https://github.com/zkmkarlsruhe/exhibition-vm-controller"
+    }
+  ],
+  "grants": [
+    {
+      "id": "DFG"
+    },
+    {
+      "id": "ERC"
+    }
+  ],
+  "communities": [
+    {
+      "identifier": "digital-humanities"
+    },
+    {
+      "identifier": "digital-preservation"
+    }
+  ]
+}

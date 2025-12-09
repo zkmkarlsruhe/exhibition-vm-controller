@@ -1,0 +1,55 @@
+# Authors and Contributors
+
+## Project Lead and Main Developer
+
+**Marc Schütze**
+ZKM | Center for Art and Media Karlsruhe
+Email: mschuetze@zkm.de
+Role: Technical restoration, system architecture, implementation
+
+## Acknowledgments
+
+This project was developed at ZKM | Center for Art and Media Karlsruhe for the exhibition "Choose Your Filter! Browser Art since the Beginnings of the World Wide Web" (February–August 2025).
+
+### Exhibition Team
+- **Daniel Heiss** - Technical restoration and collaboration
+- **Matthieu Vlaminck** - Technical restoration and collaboration
+- **Leonie Rök** - Technical restoration and collaboration
+- **Matthias Gommel** - Technical project management
+
+### Curators
+- **Laura C. Schmidt** - Curator
+- **Inge Hinterwaldner** - Curator
+- **Daniela Hönigsberg** - Curator
+
+### Artists
+Special thanks to the artists whose works were restored using this framework:
+- **Entropy8Zuper!** - Eden.Garden (2001)
+- **Stanza** - Subfusion (2001-2002)
+- **JODI** - Wrong Browser Series (2001-2012)
+- **Mark Daggett** - Browser Gestures (2001)
+- **Peter Luining** - ZNC browser 2.0 (2003)
+- **Andy Freeman and Jason Skeets** - <earshot> (1999)
+- **Gavin Baily and Tom Corby** - Reconnoitre (1997-2002)
+
+### Institutions
+- **ZKM | Center for Art and Media Karlsruhe**
+- **Karlsruher Institut für Technologie (KIT)**
+
+### Funding
+This research was supported by:
+- **Deutsche Forschungsgemeinschaft (DFG)**
+- **European Research Council (ERC)**
+
+### Inspiration and Prior Work
+- **Rhizome** - For pioneering work in digital art preservation and emulation-based conservation
+
+## Contributing
+
+If you contribute to this project, please add your name to this file as part of your pull request.
+
+For more information on how to contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+Last updated: 2025-12-09

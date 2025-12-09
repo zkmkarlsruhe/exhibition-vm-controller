@@ -1,0 +1,63 @@
+# Exhibition VM Controller - Systemd Service Unit
+# Author: Marc Schütze, ZKM | Center for Art and Media Karlsruhe
+# License: MIT
+#
+# Installation:
+#   1. Copy this file to /etc/systemd/system/
+#   2. Edit paths and configuration below
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable exhibition-vm-controller
+#   5. sudo systemctl start exhibition-vm-controller
+
+[Unit]
+Description=Exhibition VM Controller - Digital Artwork Conservation System
+Documentation=https://github.com/zkmkarlsruhe/exhibition-vm-controller
+After=network.target libvirtd.service
+Wants=libvirtd.service
+
+[Service]
+Type=simple
+
+# User and group to run as (adjust to your setup)
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+
+# Working directory - CHANGE THIS to your installation path
+WorkingDirectory=/path/to/exhibition-vm-controller/host-controller
+
+# Python poetry environment - CHANGE THIS to your poetry installation path
+ExecStart=/path/to/.local/bin/poetry run python -m vm_controller.api
+
+# OR if using system Python with virtualenv:
+# ExecStart=/path/to/venv/bin/python -m vm_controller.api
+
+# OR if using system Python directly:
+# ExecStart=/usr/bin/python3 -m vm_controller.api
+
+# Environment variables (adjust as needed)
+Environment="VMCTL_VM_NAME=your-vm-name"
+Environment="VMCTL_SNAPSHOT_NAME=ready"
+Environment="VMCTL_API_PORT=8000"
+Environment="VMCTL_LOG_LEVEL=INFO"
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Resource limits (optional, adjust as needed)
+# LimitNOFILE=65536
+
+# Standard output and error logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=exhibition-vm-controller
+
+# Security hardening (optional, uncomment if desired)
+# NoNewPrivileges=true
+# PrivateTmp=true
+# ProtectSystem=strict
+# ProtectHome=true
+# ReadWritePaths=/path/to/exhibition-vm-controller
+
+[Install]
+WantedBy=multi-user.target
