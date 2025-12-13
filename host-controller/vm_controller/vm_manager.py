@@ -115,17 +115,17 @@ class VMManager:
         name = snapshot_name or self.snapshot_name
         logger.info(f"Creating snapshot '{name}' for VM '{self.vm_name}'")
 
-        # Try to delete existing snapshot (ignore if doesn't exist)
+        # Try to delete existing snapshot and its children (ignore if doesn't exist)
         try:
             subprocess.run(
-                ["virsh", "snapshot-delete", self.vm_name, name],
+                ["virsh", "snapshot-delete", self.vm_name, name, "--children"],
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            logger.debug(f"Deleted existing snapshot '{name}'")
+            logger.debug(f"Deleted existing snapshot '{name}' and its children")
         except subprocess.CalledProcessError as e:
-            if "No snapshot with name" not in e.stderr:
+            if "No snapshot with name" not in e.stderr and "domain snapshot not found" not in e.stderr.lower():
                 logger.warning(f"Could not delete existing snapshot: {e.stderr}")
 
         # Create new snapshot
@@ -196,31 +196,39 @@ class VMManager:
             RuntimeError: If snapshot doesn't exist
             subprocess.CalledProcessError: If revert fails
         """
-        logger.info(
-            f"Starting VM '{self.vm_name}' by reverting to snapshot '{self.snapshot_name}'"
-        )
-
-        # Verify snapshot exists
-        if not self.snapshot_exists():
-            raise RuntimeError(
-                f"Cannot start VM: snapshot '{self.snapshot_name}' does not exist"
+        # Check if snapshot exists
+        if self.snapshot_exists():
+            logger.info(
+                f"Starting VM '{self.vm_name}' by reverting to snapshot '{self.snapshot_name}'"
             )
 
-        # Call reset callback if provided
-        if self.on_reset_callback:
-            try:
-                self.on_reset_callback()
-            except Exception as e:
-                logger.error(f"Error in reset callback: {e}")
+            # Call reset callback if provided
+            if self.on_reset_callback:
+                try:
+                    self.on_reset_callback()
+                except Exception as e:
+                    logger.error(f"Error in reset callback: {e}")
 
-        # Revert to snapshot (this also starts the VM)
-        subprocess.run(
-            ["virsh", "snapshot-revert", self.vm_name, self.snapshot_name],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        logger.info("VM reverted to snapshot and started successfully")
+            # Revert to snapshot (this also starts the VM)
+            subprocess.run(
+                ["virsh", "snapshot-revert", self.vm_name, self.snapshot_name],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            logger.info("VM reverted to snapshot and started successfully")
+        else:
+            # No snapshot exists, just start the VM
+            logger.warning(
+                f"Snapshot '{self.snapshot_name}' does not exist - starting VM without revert"
+            )
+            subprocess.run(
+                ["virsh", "start", self.vm_name],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            logger.info(f"VM '{self.vm_name}' started successfully")
 
     def check_vm_responsiveness(self, timeout: float = 5.0) -> bool:
         """

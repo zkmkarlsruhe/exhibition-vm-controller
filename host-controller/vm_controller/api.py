@@ -107,29 +107,20 @@ async def lifespan(app: FastAPI):
     # Initialize heartbeat monitor with restart callback
     async def on_heartbeat_timeout():
         """Callback when heartbeat times out."""
-        if vm_manager and vm_manager.auto_revert_enabled:
-            logger.error("Heartbeat timeout - initiating VM restart")
-            try:
-                # Run synchronous VM restart in thread pool
-                # Skip waiting for VM ready if QEMU agent checking is disabled
-                loop = asyncio.get_event_loop()
-                wait_for_ready = config.check_qemu_agent
-                await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
-                logger.info("VM restarted successfully after heartbeat timeout")
+        logger.error("Heartbeat timeout - initiating VM restart")
+        try:
+            # Run synchronous VM restart in thread pool
+            # Skip waiting for VM ready if QEMU agent checking is disabled
+            loop = asyncio.get_event_loop()
+            wait_for_ready = config.check_qemu_agent
+            await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
+            logger.info("VM restarted successfully after heartbeat timeout")
 
-                # Wait for VM to be ready, then re-enable heartbeat monitoring
-                await asyncio.sleep(config.vm_startup_heartbeat_delay)
-                if heartbeat_monitor:
-                    heartbeat_monitor.enable()
-                    logger.info("Heartbeat monitoring re-enabled")
+            # Wait before heartbeat timer resets
+            await asyncio.sleep(config.vm_startup_heartbeat_delay)
 
-            except Exception as e:
-                logger.error(f"Failed to restart VM after timeout: {e}", exc_info=True)
-        else:
-            logger.warning(
-                "Heartbeat timeout detected but auto-revert is disabled - "
-                "manual intervention required"
-            )
+        except Exception as e:
+            logger.error(f"Failed to restart VM after timeout: {e}", exc_info=True)
 
     # Initialize VM manager first (needed for heartbeat monitor)
     vm_manager = VMManager(
@@ -155,20 +146,25 @@ async def lifespan(app: FastAPI):
 
     vm_manager.on_reset_callback = on_vm_reset
 
-    # Ensure VM is running and reverted to clean state on startup
-    logger.info("Ensuring VM is in clean state on startup...")
-    try:
-        loop = asyncio.get_event_loop()
-        wait_for_ready = config.check_qemu_agent
-        await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
-        logger.info("VM started and reverted to snapshot successfully")
-    except Exception as e:
-        logger.error(f"Failed to start VM on startup: {e}", exc_info=True)
-        raise
+    # Ensure VM is running and reverted to clean state on startup (if snapshot exists)
+    if vm_manager.snapshot_exists():
+        logger.info("Ensuring VM is in clean state on startup...")
+        try:
+            loop = asyncio.get_event_loop()
+            wait_for_ready = config.check_qemu_agent
+            await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
+            logger.info("VM started and reverted to snapshot successfully")
+        except Exception as e:
+            logger.error(f"Failed to start VM on startup: {e}", exc_info=True)
+            raise
+    else:
+        logger.warning(
+            f"Snapshot '{vm_manager.snapshot_name}' does not exist - "
+            "skipping automatic VM restart. Please create snapshot via API."
+        )
 
-    # Start heartbeat monitoring
+    # Start heartbeat monitoring loop
     await heartbeat_monitor.start_monitoring()
-    heartbeat_monitor.enable()
 
     logger.info("Exhibition VM Controller API started successfully")
 
@@ -275,6 +271,10 @@ async def start_vm():
         )
 
     try:
+        # Clear manual stop flag to re-enable auto-restart
+        if heartbeat_monitor:
+            heartbeat_monitor.clear_manual_stop()
+
         # Run in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, vm_manager.start_vm)
@@ -301,9 +301,9 @@ async def stop_vm():
         )
 
     try:
-        # Disable heartbeat monitoring while stopping
+        # Mark as manual stop to prevent auto-restart
         if heartbeat_monitor:
-            heartbeat_monitor.disable()
+            heartbeat_monitor.set_manual_stop()
 
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, vm_manager.stop_vm)
@@ -330,17 +330,13 @@ async def restart_vm():
         )
 
     try:
+        # Clear manual stop flag to re-enable auto-restart
         if heartbeat_monitor:
-            heartbeat_monitor.disable()
+            heartbeat_monitor.clear_manual_stop()
 
         loop = asyncio.get_event_loop()
         wait_for_ready = config.check_qemu_agent
-        success = await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
-
-        if success and heartbeat_monitor:
-            # Wait before re-enabling heartbeat
-            await asyncio.sleep(config.vm_startup_heartbeat_delay)
-            heartbeat_monitor.enable()
+        await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
 
         return MessageResponse(
             message=f"VM '{vm_manager.vm_name}' restarted successfully",

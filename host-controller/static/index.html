@@ -249,7 +249,6 @@
             <!-- VM Control Card -->
             <div class="card">
                 <h2>VM Control</h2>
-                <button onclick="restartVM()">↻ Restart VM</button>
                 <button onclick="startVM()">▶ Start VM</button>
                 <button class="btn-danger" onclick="stopVM()">⏹ Stop VM</button>
             </div>
@@ -258,7 +257,28 @@
             <div class="card">
                 <h2>Snapshot Management</h2>
                 <button class="btn-success" onclick="createSnapshot()">💾 Create Snapshot</button>
-                <button class="btn-warning" onclick="createSnapshot(prompt('Snapshot name:'))">💾 Create Named Snapshot</button>
+                <button class="btn-warning" onclick="revertVM()">↻ Revert to Snapshot</button>
+            </div>
+
+            <!-- Heartbeat Activity Card -->
+            <div class="card">
+                <h2>Heartbeat Activity</h2>
+                <div class="status-item">
+                    <span class="status-label">Status</span>
+                    <span class="status-value" id="hbEnabled">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Last Received</span>
+                    <span class="status-value" id="hbLastReceived">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Time Since Last</span>
+                    <span class="status-value" id="hbTimeSince">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Health</span>
+                    <span class="status-value" id="hbHealth">-</span>
+                </div>
             </div>
 
             <!-- Auto-Revert Card -->
@@ -297,9 +317,14 @@
             }
         }
 
+        let statusFailCount = 0;
+
         async function loadStatus() {
             try {
                 const status = await fetch(`${API_BASE}/api/v1/status`).then(r => r.json());
+
+                // Reset fail count on success
+                statusFailCount = 0;
 
                 document.getElementById('vmName').textContent = status.vm_name;
 
@@ -313,14 +338,25 @@
 
                 const heartbeat = document.getElementById('heartbeatStatus');
                 const hb = status.heartbeat;
-                if (hb.enabled && hb.is_healthy) {
-                    heartbeat.textContent = `✓ Healthy (${hb.seconds_since_last.toFixed(1)}s ago)`;
-                    heartbeat.className = 'status-value status-good';
-                } else if (hb.enabled && !hb.is_healthy) {
-                    heartbeat.textContent = `✗ Timeout (${hb.seconds_since_last.toFixed(1)}s ago)`;
-                    heartbeat.className = 'status-value status-bad';
-                } else {
+                const timeSince = hb.time_since_heartbeat;
+
+                if (!hb.enabled) {
                     heartbeat.textContent = 'Disabled';
+                    heartbeat.className = 'status-value status-warning';
+                } else if (hb.has_received_heartbeat && !hb.is_timed_out && timeSince !== null) {
+                    // Actually received a heartbeat from guest and it's fresh
+                    heartbeat.textContent = `✓ Healthy (${timeSince.toFixed(1)}s ago)`;
+                    heartbeat.className = 'status-value status-good';
+                } else if (hb.has_received_heartbeat && hb.is_timed_out && timeSince !== null) {
+                    // Received heartbeat before but now timed out
+                    heartbeat.textContent = `✗ Timeout (${timeSince.toFixed(1)}s ago)`;
+                    heartbeat.className = 'status-value status-bad';
+                } else if (timeSince !== null) {
+                    // Never received heartbeat, just show waiting time
+                    heartbeat.textContent = `Waiting (${timeSince.toFixed(1)}s)`;
+                    heartbeat.className = 'status-value status-warning';
+                } else {
+                    heartbeat.textContent = 'Waiting...';
                     heartbeat.className = 'status-value status-warning';
                 }
 
@@ -328,24 +364,67 @@
                 autoRevert.textContent = status.auto_revert_enabled ? 'Enabled' : 'Disabled';
                 autoRevert.className = `status-value ${status.auto_revert_enabled ? 'status-good' : 'status-warning'}`;
 
+                // Heartbeat Activity Details
+                const hbEnabled = document.getElementById('hbEnabled');
+                hbEnabled.textContent = hb.enabled ? 'Enabled' : 'Disabled';
+                hbEnabled.className = `status-value ${hb.enabled ? 'status-good' : 'status-warning'}`;
+
+                const hbLastReceived = document.getElementById('hbLastReceived');
+                if (hb.last_heartbeat && hb.has_received_heartbeat) {
+                    const lastTime = new Date(hb.last_heartbeat * 1000).toLocaleTimeString();
+                    hbLastReceived.textContent = lastTime;
+                    hbLastReceived.className = 'status-value';
+                } else {
+                    hbLastReceived.textContent = 'Never';
+                    hbLastReceived.className = 'status-value status-warning';
+                }
+
+                const hbTimeSince = document.getElementById('hbTimeSince');
+                if (hb.has_received_heartbeat && timeSince !== null) {
+                    hbTimeSince.textContent = `${timeSince.toFixed(1)}s ago`;
+                    hbTimeSince.className = 'status-value';
+                } else {
+                    hbTimeSince.textContent = 'N/A';
+                    hbTimeSince.className = 'status-value status-warning';
+                }
+
+                const hbHealth = document.getElementById('hbHealth');
+                if (!hb.enabled) {
+                    hbHealth.textContent = 'Disabled';
+                    hbHealth.className = 'status-value status-warning';
+                } else if (hb.has_received_heartbeat && !hb.is_timed_out) {
+                    hbHealth.textContent = '✓ Healthy';
+                    hbHealth.className = 'status-value status-good';
+                } else if (hb.has_received_heartbeat && hb.is_timed_out) {
+                    hbHealth.textContent = '✗ Timeout';
+                    hbHealth.className = 'status-value status-bad';
+                } else {
+                    hbHealth.textContent = 'No heartbeat yet';
+                    hbHealth.className = 'status-value status-warning';
+                }
+
                 document.getElementById('lastUpdated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
             } catch (error) {
-                showMessage('Failed to load status', 'error');
+                statusFailCount++;
+                // Only show error message after 3 consecutive failures
+                if (statusFailCount >= 3) {
+                    showMessage('Failed to load status', 'error');
+                }
+                console.error('Failed to load status:', error);
             }
         }
 
-        async function restartVM() {
-            if (!confirm('Restart VM? This will revert to snapshot.')) return;
+        async function revertVM() {
             const btn = event.target;
             btn.disabled = true;
-            btn.innerHTML = '↻ Restarting<span class="loading"></span>';
+            btn.innerHTML = '↻ Reverting<span class="loading"></span>';
             try {
                 await apiCall('/api/v1/vm/restart');
-                showMessage('VM restarted successfully');
+                showMessage('VM reverted to snapshot successfully');
                 setTimeout(loadStatus, 2000);
             } finally {
                 btn.disabled = false;
-                btn.textContent = '↻ Restart VM';
+                btn.textContent = '↻ Revert to Snapshot';
             }
         }
 
@@ -364,7 +443,6 @@
         }
 
         async function stopVM() {
-            if (!confirm('Stop VM? This will force power off.')) return;
             const btn = event.target;
             btn.disabled = true;
             btn.innerHTML = '⏹ Stopping<span class="loading"></span>';
@@ -407,7 +485,6 @@
         }
 
         async function disableAutoRevert() {
-            if (!confirm('Disable auto-revert? Manual intervention will be required on failures.')) return;
             const btn = event.target;
             btn.disabled = true;
             try {

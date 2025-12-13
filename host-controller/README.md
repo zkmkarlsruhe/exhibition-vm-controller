@@ -6,6 +6,7 @@ Python FastAPI application for controlling virtual machines in exhibition enviro
 
 This is the host controller component that runs on the physical Linux host machine. It provides:
 - REST API for VM control and monitoring
+- Web UI for remote management
 - Heartbeat monitoring system
 - Automatic snapshot-based recovery
 - Configuration management
@@ -124,6 +125,27 @@ curl -X POST http://localhost:8000/api/v1/snapshot/create
 curl -X POST http://localhost:8000/api/v1/revert/enable
 curl -X POST http://localhost:8000/api/v1/revert/disable
 ```
+
+### Web UI
+
+Access the web interface for remote VM management:
+
+```
+http://localhost:8000/ui/
+```
+
+The web UI provides:
+- **System Status**: View VM state, snapshot status, heartbeat activity, and auto-revert status
+- **VM Control**: Start and stop the VM
+- **Snapshot Management**: Create new snapshots and revert to snapshot
+- **Auto-Revert Control**: Enable or disable automatic recovery
+- **Real-time Monitoring**: Auto-refreshes status every 5 seconds
+
+Features:
+- Simple, responsive single-page interface
+- No authentication required (designed for trusted local networks)
+- Direct control without SSH access
+- Ideal for exhibition maintenance and setup
 
 ### Interactive API Documentation
 

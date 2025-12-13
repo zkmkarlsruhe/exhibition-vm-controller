@@ -25,10 +25,11 @@ class HeartbeatMonitor:
     The monitor expects periodic heartbeat signals from the guest. If no heartbeat
     is received within the timeout period, it can automatically trigger a VM restart.
 
+    Monitoring is active only when auto_revert is enabled on the VMManager.
+
     Attributes:
         timeout: Seconds without heartbeat before considering VM failed
         check_interval: How often to check for timeout (in seconds)
-        enabled: Whether heartbeat monitoring is active
         last_heartbeat: Timestamp of last received heartbeat
     """
 
@@ -46,16 +47,18 @@ class HeartbeatMonitor:
             timeout: Seconds without heartbeat before failure (default: 15.0)
             check_interval: Seconds between timeout checks (default: 0.5)
             on_timeout_callback: Function to call when timeout occurs
-            vm_manager: Optional VMManager instance for VM state monitoring
+            vm_manager: VMManager instance (required for auto_revert_enabled check)
         """
         self.timeout = timeout
         self.check_interval = check_interval
         self.on_timeout_callback = on_timeout_callback
         self.vm_manager = vm_manager
 
-        self.enabled = False
         self.last_heartbeat: Optional[float] = None
         self._check_task: Optional[asyncio.Task] = None
+        self._was_monitoring = False
+        self._actual_heartbeat_received = False  # Track if guest actually sent a heartbeat
+        self._manual_stop = False  # Track if VM was manually stopped via API
 
         logger.info(
             f"Initialized HeartbeatMonitor (timeout: {timeout}s, "
@@ -70,36 +73,22 @@ class HeartbeatMonitor:
         Call this method whenever a heartbeat is received from the VM.
         """
         self.last_heartbeat = time.time()
-        state = "enabled" if self.enabled else "disabled"
-        logger.debug(f"Received heartbeat (monitoring {state})")
-
-    def enable(self) -> None:
-        """
-        Enable heartbeat monitoring.
-
-        This resets the heartbeat timer and begins checking for timeouts.
-        """
-        logger.info("Enabling heartbeat monitoring")
-        self.enabled = True
-        self.last_heartbeat = time.time()
-
-    def disable(self) -> None:
-        """
-        Disable heartbeat monitoring.
-
-        The monitor will still accept heartbeats but won't trigger timeouts.
-        """
-        logger.info("Disabling heartbeat monitoring")
-        self.enabled = False
+        self._actual_heartbeat_received = True
+        auto_revert = "enabled" if self.vm_manager and self.vm_manager.auto_revert_enabled else "disabled"
+        logger.info(f"Received heartbeat from guest (auto-revert {auto_revert})")
 
     def is_timed_out(self) -> bool:
         """
         Check if heartbeat has timed out.
 
         Returns:
-            True if monitoring is enabled and timeout has elapsed
+            True if auto-revert is enabled and timeout has elapsed
         """
-        if not self.enabled or self.last_heartbeat is None:
+        # Only check timeout if auto-revert is enabled
+        if not self.vm_manager or not self.vm_manager.auto_revert_enabled:
+            return False
+
+        if self.last_heartbeat is None:
             return False
 
         elapsed = time.time() - self.last_heartbeat
@@ -134,13 +123,16 @@ class HeartbeatMonitor:
         """
         time_since = self.get_time_since_heartbeat()
 
+        # Monitoring is enabled if auto-revert is enabled
+        enabled = self.vm_manager and self.vm_manager.auto_revert_enabled
+
         return {
-            "enabled": self.enabled,
+            "enabled": enabled,
             "timeout": self.timeout,
-            "last_heartbeat": self.last_heartbeat,
+            "last_heartbeat": self.last_heartbeat if self._actual_heartbeat_received else None,
             "time_since_heartbeat": time_since,
             "is_timed_out": self.is_timed_out(),
-            "has_received_heartbeat": self.last_heartbeat is not None,
+            "has_received_heartbeat": self._actual_heartbeat_received,
         }
 
     async def start_monitoring(self) -> None:
@@ -183,20 +175,38 @@ class HeartbeatMonitor:
         Runs continuously until cancelled, checking for:
         - Heartbeat timeouts
         - VM state (if vm_manager is provided)
+
+        Only performs checks when auto-revert is enabled.
         """
         logger.debug("Heartbeat monitoring loop started")
 
         try:
             while True:
-                # Check if VM is running (if vm_manager is available and monitoring is enabled)
-                if self.enabled and self.vm_manager is not None:
+                # Check if auto-revert is enabled
+                is_monitoring = self.vm_manager and self.vm_manager.auto_revert_enabled
+
+                if not is_monitoring:
+                    # Mark that we're not monitoring
+                    self._was_monitoring = False
+                    await asyncio.sleep(self.check_interval)
+                    continue
+
+                # If we just started monitoring, reset the timer
+                if not self._was_monitoring:
+                    self.last_heartbeat = time.time()
+                    self._was_monitoring = True
+                    logger.info("Heartbeat monitoring timer started")
+
+                # Initialize heartbeat timer if not set (shouldn't happen, but just in case)
+                if self.last_heartbeat is None:
+                    self.last_heartbeat = time.time()
+
+                # Check if VM is running (unless manually stopped)
+                if not self._manual_stop:
                     try:
                         is_running = self.vm_manager.is_running()
                         if not is_running:
                             logger.error("VM is not running, triggering recovery")
-
-                            # Disable monitoring before callback
-                            self.disable()
 
                             if self.on_timeout_callback:
                                 try:
@@ -212,12 +222,9 @@ class HeartbeatMonitor:
                     except Exception as e:
                         logger.debug(f"Error checking VM state: {e}")
 
-                # Check for heartbeat timeout
-                if self.is_timed_out():
+                # Check for heartbeat timeout (unless manually stopped)
+                if not self._manual_stop and self.is_timed_out():
                     logger.error("Heartbeat timeout detected, triggering recovery")
-
-                    # Disable monitoring before callback to prevent multiple simultaneous timeouts
-                    self.disable()
 
                     if self.on_timeout_callback:
                         try:
@@ -239,13 +246,24 @@ class HeartbeatMonitor:
             logger.error(f"Error in heartbeat monitoring loop: {e}", exc_info=True)
             raise
 
+    def set_manual_stop(self) -> None:
+        """Mark that VM was manually stopped via API."""
+        logger.info("VM manually stopped - disabling auto-restart")
+        self._manual_stop = True
+
+    def clear_manual_stop(self) -> None:
+        """Clear manual stop flag (called when VM is started)."""
+        logger.debug("Clearing manual stop flag")
+        self._manual_stop = False
+
     def reset(self) -> None:
         """
         Reset the heartbeat monitor to initial state.
 
-        This clears the last heartbeat timestamp and disables monitoring.
+        This clears the last heartbeat timestamp and received flag.
         Useful when restarting the VM.
         """
         logger.debug("Resetting heartbeat monitor")
         self.last_heartbeat = None
-        self.enabled = False
+        self._actual_heartbeat_received = False
+        self._manual_stop = False

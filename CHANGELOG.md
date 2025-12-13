@@ -18,6 +18,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics collection and visualization (Prometheus/Grafana integration)
 - Modular plugin system for custom polling and signaling handlers
 
+## [1.3.0] - 2025-12-13
+
+### Added
+- **Web UI for remote VM management** - Simple, responsive web interface at `/ui/` for maintenance personnel to control VMs without SSH access
+  - System status dashboard showing VM state, snapshot, heartbeat activity, and auto-revert status
+  - VM control buttons (Start, Stop)
+  - Snapshot management (Create, Revert to Snapshot)
+  - Auto-revert toggle (Enable/Disable for maintenance mode)
+  - Real-time monitoring with auto-refresh every 5 seconds
+  - Clean single-page interface with no authentication (for trusted local networks)
+- **Manual stop tracking** - System distinguishes between intentional VM stop via API/UI (stays stopped) vs. guest shutdown or crash (auto-restarts)
+- **Improved heartbeat status tracking** - Distinguishes between actual guest heartbeats and internal monitoring timer
+  - Shows "Waiting" status when no heartbeat received yet
+  - Shows "Healthy" only when actual heartbeat received from guest
+  - Detailed heartbeat activity card with time since last heartbeat and health status
+
+### Changed
+- **Simplified heartbeat monitoring** - Monitoring is now controlled solely by `auto_revert_enabled` setting, removing redundant toggle
+  - Heartbeat monitoring automatically starts/stops with auto-revert enable/disable
+  - No more separate enable/disable of heartbeat monitoring
+- **Heartbeat timer initialization** - Timer now starts automatically when monitoring begins, enabling timeout detection even before first heartbeat
+- **VM state monitoring respects manual stops** - Auto-restart only triggers on unexpected shutdowns, not manual stops via API/UI
+
+### Fixed
+- Heartbeat status now correctly reports whether actual heartbeat was received from guest
+- Manual VM stop via API/UI no longer triggers immediate auto-restart
+- Web UI correctly displays heartbeat status using proper API property names
+
+### Benefits
+- Maintenance personnel can control VMs remotely via browser without SSH
+- Clear distinction between maintenance mode (manual stop) and failure recovery (auto-restart)
+- Accurate heartbeat status prevents false "healthy" reports when no heartbeat received
+- Simplified monitoring architecture easier to understand and maintain
+
 ## [1.2.0] - 2025-12-13
 
 ### Added
