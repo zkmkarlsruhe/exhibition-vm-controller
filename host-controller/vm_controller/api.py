@@ -232,6 +232,7 @@ async def get_status():
         )
 
 
+@app.get("/api/v1/heartbeat", response_model=MessageResponse)
 @app.post("/api/v1/heartbeat", response_model=MessageResponse)
 async def receive_heartbeat():
     """
@@ -239,6 +240,8 @@ async def receive_heartbeat():
 
     This endpoint should be called periodically by monitoring scripts
     running inside the VM to signal that the VM is alive and functioning.
+
+    Supports both GET and POST methods for compatibility with AutoIt and other tools.
     """
     if not heartbeat_monitor:
         raise HTTPException(
@@ -254,9 +257,10 @@ async def receive_heartbeat():
     )
 
 
+@app.get("/api/v1/vm/start", response_model=MessageResponse)
 @app.post("/api/v1/vm/start", response_model=MessageResponse)
 async def start_vm():
-    """Start VM by reverting to snapshot."""
+    """Start VM by reverting to snapshot. Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -279,9 +283,10 @@ async def start_vm():
         )
 
 
+@app.get("/api/v1/vm/stop", response_model=MessageResponse)
 @app.post("/api/v1/vm/stop", response_model=MessageResponse)
 async def stop_vm():
-    """Stop (destroy) VM."""
+    """Stop (destroy) VM. Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -307,9 +312,10 @@ async def stop_vm():
         )
 
 
+@app.get("/api/v1/vm/restart", response_model=MessageResponse)
 @app.post("/api/v1/vm/restart", response_model=MessageResponse)
 async def restart_vm():
-    """Restart VM by reverting to snapshot."""
+    """Restart VM by reverting to snapshot. Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -365,6 +371,7 @@ async def list_snapshots():
         )
 
 
+@app.get("/api/v1/snapshot/create", response_model=MessageResponse)
 @app.post("/api/v1/snapshot/create", response_model=MessageResponse)
 async def create_snapshot(snapshot_name: Optional[str] = None):
     """
@@ -372,6 +379,8 @@ async def create_snapshot(snapshot_name: Optional[str] = None):
 
     Query parameter:
     - snapshot_name: Name for the snapshot (optional, default: configured snapshot_name)
+
+    Supports both GET and POST methods for compatibility with AutoIt and other tools.
     """
     if not vm_manager:
         raise HTTPException(
@@ -395,9 +404,14 @@ async def create_snapshot(snapshot_name: Optional[str] = None):
         )
 
 
+@app.get("/api/v1/snapshot/delete/{snapshot_name}", response_model=MessageResponse)
 @app.delete("/api/v1/snapshot/{snapshot_name}", response_model=MessageResponse)
 async def delete_snapshot(snapshot_name: str):
-    """Delete a snapshot."""
+    """
+    Delete a snapshot.
+
+    Supports both GET (at /api/v1/snapshot/delete/{name}) and DELETE (at /api/v1/snapshot/{name}) methods.
+    """
     if not vm_manager:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -419,9 +433,10 @@ async def delete_snapshot(snapshot_name: str):
         )
 
 
+@app.get("/api/v1/revert/enable", response_model=MessageResponse)
 @app.post("/api/v1/revert/enable", response_model=MessageResponse)
 async def enable_auto_revert():
-    """Enable automatic revert on heartbeat timeout."""
+    """Enable automatic revert on heartbeat timeout. Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -435,9 +450,10 @@ async def enable_auto_revert():
     )
 
 
+@app.get("/api/v1/revert/disable", response_model=MessageResponse)
 @app.post("/api/v1/revert/disable", response_model=MessageResponse)
 async def disable_auto_revert():
-    """Disable automatic revert (for maintenance)."""
+    """Disable automatic revert (for maintenance). Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

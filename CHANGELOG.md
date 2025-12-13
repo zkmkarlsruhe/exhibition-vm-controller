@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker containerization for host controller
 - VMware and VirtualBox backend support
 - Metrics collection and visualization (Prometheus/Grafana integration)
+- Modular plugin system for custom polling and signaling handlers
+
+## [1.2.0] - 2025-12-13
+
+### Added
+- **GET request support for all API endpoints** - All POST endpoints now also accept GET requests for compatibility with AutoIt and other tools that cannot make POST requests
+- GET support for: `/api/v1/heartbeat`, `/api/v1/vm/start`, `/api/v1/vm/stop`, `/api/v1/vm/restart`, `/api/v1/snapshot/create`, `/api/v1/snapshot/delete/{name}`, `/api/v1/revert/enable`, `/api/v1/revert/disable`
+
+### Changed
+- **AutoIt compatibility** - All control endpoints can now be called with simple GET requests from AutoIt guest scripts
+- DELETE endpoint `/api/v1/snapshot/{name}` now also available as GET at `/api/v1/snapshot/delete/{name}`
+
+### Benefits
+- Enables simple HTTP control from legacy environments (Windows XP, older AutoIt versions)
+- No JSON parsing required for basic operations
+- Maintains backward compatibility with existing POST-based clients
 
 ## [1.1.0] - 2025-12-13
 

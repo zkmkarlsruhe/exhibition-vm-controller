@@ -112,9 +112,11 @@ Get detailed heartbeat monitoring status.
 
 ### Heartbeat
 
-#### POST /api/v1/heartbeat
+#### GET|POST /api/v1/heartbeat
 
 Receive heartbeat signal from guest VM. Called periodically by monitoring scripts inside the VM.
+
+**Methods**: GET, POST (both supported for AutoIt compatibility)
 
 **Query Parameters**: None required (optional parameters can be added for future extensions)
 
@@ -135,14 +137,20 @@ Receive heartbeat signal from guest VM. Called periodically by monitoring script
 **Usage from Guest**:
 
 ```bash
-# Simple heartbeat
+# GET request (AutoIt compatible)
+curl http://192.168.122.1:8000/api/v1/heartbeat
+
+# POST request
 curl -X POST http://192.168.122.1:8000/api/v1/heartbeat
 
-# AutoIt
-InetGet("http://192.168.122.1:8000/api/v1/heartbeat", "", 1)
+# AutoIt (uses GET)
+$oHTTP.Open("GET", "http://192.168.122.1:8000/api/v1/heartbeat", False)
+$oHTTP.Send()
 
 # Python
 import requests
+requests.get("http://192.168.122.1:8000/api/v1/heartbeat")
+# or
 requests.post("http://192.168.122.1:8000/api/v1/heartbeat")
 ```
 
@@ -153,9 +161,11 @@ requests.post("http://192.168.122.1:8000/api/v1/heartbeat")
 
 ### VM Control
 
-#### POST /api/v1/vm/start
+#### GET|POST /api/v1/vm/start
 
 Start the VM by reverting to the configured snapshot.
+
+**Methods**: GET, POST (both supported for AutoIt compatibility)
 
 **Response**:
 ```json
@@ -176,9 +186,11 @@ Start the VM by reverting to the configured snapshot.
 
 ---
 
-#### POST /api/v1/vm/stop
+#### GET|POST /api/v1/vm/stop
 
 Stop (destroy) the VM.
+
+**Methods**: GET, POST (both supported for AutoIt compatibility)
 
 **Response**:
 ```json
@@ -201,9 +213,11 @@ Stop (destroy) the VM.
 
 ---
 
-#### POST /api/v1/vm/restart
+#### GET|POST /api/v1/vm/restart
 
 Restart the VM by reverting to snapshot (recommended recovery method).
+
+**Methods**: GET, POST (both supported for AutoIt compatibility)
 
 **Response**:
 ```json
@@ -252,19 +266,24 @@ List all snapshots for the configured VM.
 
 ---
 
-#### POST /api/v1/snapshot/create
+#### GET|POST /api/v1/snapshot/create
 
 Create a new snapshot or update an existing one.
+
+**Methods**: GET, POST (both supported for AutoIt compatibility)
 
 **Query Parameters**:
 - `snapshot_name` (optional): Name for the snapshot. If omitted, uses the configured snapshot name (typically "ready").
 
 **Example**:
 ```bash
-# Create/update default "ready" snapshot
-curl -X POST http://localhost:8000/api/v1/snapshot/create
+# Create/update default "ready" snapshot (GET)
+curl "http://localhost:8000/api/v1/snapshot/create"
 
-# Create named snapshot
+# Create named snapshot (GET with parameter)
+curl "http://localhost:8000/api/v1/snapshot/create?snapshot_name=backup-2025-12-09"
+
+# POST method also supported
 curl -X POST "http://localhost:8000/api/v1/snapshot/create?snapshot_name=backup-2025-12-09"
 ```
 
@@ -289,16 +308,24 @@ curl -X POST "http://localhost:8000/api/v1/snapshot/create?snapshot_name=backup-
 
 ---
 
-#### DELETE /api/v1/snapshot/{snapshot_name}
+#### GET|DELETE /api/v1/snapshot/{snapshot_name}
 
 Delete a specific snapshot.
+
+**Methods**:
+- GET at `/api/v1/snapshot/delete/{snapshot_name}` (AutoIt compatible)
+- DELETE at `/api/v1/snapshot/{snapshot_name}` (REST standard)
 
 **Path Parameters**:
 - `snapshot_name`: Name of the snapshot to delete
 
 **Example**:
 ```bash
-curl -X DELETE http://localhost:8000/api/v1/snapshot/backup-2025-12-01
+# GET method (AutoIt compatible)
+curl "http://localhost:8000/api/v1/snapshot/delete/backup-2025-12-01"
+
+# DELETE method (REST standard)
+curl -X DELETE "http://localhost:8000/api/v1/snapshot/backup-2025-12-01"
 ```
 
 **Response**:
@@ -319,9 +346,11 @@ curl -X DELETE http://localhost:8000/api/v1/snapshot/backup-2025-12-01
 
 ### Auto-Revert Control
 
-#### POST /api/v1/revert/enable
+#### GET|POST /api/v1/revert/enable
 
 Enable automatic snapshot revert on heartbeat timeout.
+
+**Methods**: GET, POST (both supported for AutoIt compatibility)
 
 **Response**:
 ```json
@@ -338,9 +367,11 @@ When enabled (default), the system automatically reverts to the configured snaps
 
 ---
 
-#### POST /api/v1/revert/disable
+#### GET|POST /api/v1/revert/disable
 
 Disable automatic snapshot revert. Use for maintenance or manual control.
+
+**Methods**: GET, POST (both supported for AutoIt compatibility)
 
 **Response**:
 ```json
