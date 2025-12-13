@@ -20,6 +20,7 @@ from typing import Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from vm_controller.config import Config
@@ -186,9 +187,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Exhibition VM Controller API",
     description="REST API for controlling VMs in exhibition environments",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
 )
+
+# Mount static files for web interface
+static_path = Path(__file__).parent.parent / "static"
+if static_path.exists():
+    app.mount("/ui", StaticFiles(directory=str(static_path), html=True), name="static")
+    logger.info(f"Web UI available at /ui/")
 
 
 # API Endpoints

@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exhibition VM Controller</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .card h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .status-item:last-child {
+            border-bottom: none;
+        }
+
+        .status-label {
+            color: #666;
+        }
+
+        .status-value {
+            font-weight: 500;
+        }
+
+        .status-good {
+            color: #22c55e;
+        }
+
+        .status-bad {
+            color: #ef4444;
+        }
+
+        .status-warning {
+            color: #f59e0b;
+        }
+
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            width: 100%;
+            margin-bottom: 10px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2563eb;
+        }
+
+        button:active {
+            background: #1d4ed8;
+        }
+
+        button:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .btn-warning {
+            background: #f59e0b;
+        }
+
+        .btn-warning:hover {
+            background: #d97706;
+        }
+
+        .btn-success {
+            background: #22c55e;
+        }
+
+        .btn-success:hover {
+            background: #16a34a;
+        }
+
+        .message {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .message.success {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #86efac;
+        }
+
+        .message.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #ffffff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-left: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .refresh-btn {
+            background: #6b7280;
+            padding: 8px 16px;
+            font-size: 12px;
+            display: inline-block;
+            width: auto;
+            margin-bottom: 0;
+        }
+
+        .refresh-btn:hover {
+            background: #4b5563;
+        }
+
+        .header-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+        }
+
+        .last-updated {
+            color: #666;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Exhibition VM Controller</h1>
+            <p class="subtitle">Remote Management Interface</p>
+            <div class="header-actions">
+                <span class="last-updated" id="lastUpdated">Loading...</span>
+                <button class="refresh-btn" onclick="loadStatus()">Refresh Status</button>
+            </div>
+        </header>
+
+        <div id="message" class="message"></div>
+
+        <div class="grid">
+            <!-- Status Card -->
+            <div class="card">
+                <h2>System Status</h2>
+                <div class="status-item">
+                    <span class="status-label">VM Name</span>
+                    <span class="status-value" id="vmName">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">VM State</span>
+                    <span class="status-value" id="vmState">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Snapshot</span>
+                    <span class="status-value" id="snapshot">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Heartbeat</span>
+                    <span class="status-value" id="heartbeatStatus">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Auto-Revert</span>
+                    <span class="status-value" id="autoRevert">-</span>
+                </div>
+            </div>
+
+            <!-- VM Control Card -->
+            <div class="card">
+                <h2>VM Control</h2>
+                <button onclick="restartVM()">↻ Restart VM</button>
+                <button onclick="startVM()">▶ Start VM</button>
+                <button class="btn-danger" onclick="stopVM()">⏹ Stop VM</button>
+            </div>
+
+            <!-- Snapshot Card -->
+            <div class="card">
+                <h2>Snapshot Management</h2>
+                <button class="btn-success" onclick="createSnapshot()">💾 Create Snapshot</button>
+                <button class="btn-warning" onclick="createSnapshot(prompt('Snapshot name:'))">💾 Create Named Snapshot</button>
+            </div>
+
+            <!-- Auto-Revert Card -->
+            <div class="card">
+                <h2>Auto-Revert Control</h2>
+                <button class="btn-success" onclick="enableAutoRevert()">✓ Enable Auto-Revert</button>
+                <button class="btn-danger" onclick="disableAutoRevert()">✗ Disable Auto-Revert</button>
+                <p style="color: #666; font-size: 12px; margin-top: 10px;">
+                    Disable for maintenance, enable for normal operation
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+
+        function showMessage(text, type = 'success') {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = `message ${type} show`;
+            setTimeout(() => msg.classList.remove('show'), 5000);
+        }
+
+        async function apiCall(endpoint, method = 'GET') {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, { method });
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(error.detail || 'Request failed');
+                }
+                return await response.json();
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        async function loadStatus() {
+            try {
+                const status = await fetch(`${API_BASE}/api/v1/status`).then(r => r.json());
+
+                document.getElementById('vmName').textContent = status.vm_name;
+
+                const vmState = document.getElementById('vmState');
+                vmState.textContent = status.vm_state;
+                vmState.className = `status-value ${status.vm_is_running ? 'status-good' : 'status-bad'}`;
+
+                const snapshot = document.getElementById('snapshot');
+                snapshot.textContent = status.snapshot_name;
+                snapshot.className = `status-value ${status.snapshot_exists ? 'status-good' : 'status-bad'}`;
+
+                const heartbeat = document.getElementById('heartbeatStatus');
+                const hb = status.heartbeat;
+                if (hb.enabled && hb.is_healthy) {
+                    heartbeat.textContent = `✓ Healthy (${hb.seconds_since_last.toFixed(1)}s ago)`;
+                    heartbeat.className = 'status-value status-good';
+                } else if (hb.enabled && !hb.is_healthy) {
+                    heartbeat.textContent = `✗ Timeout (${hb.seconds_since_last.toFixed(1)}s ago)`;
+                    heartbeat.className = 'status-value status-bad';
+                } else {
+                    heartbeat.textContent = 'Disabled';
+                    heartbeat.className = 'status-value status-warning';
+                }
+
+                const autoRevert = document.getElementById('autoRevert');
+                autoRevert.textContent = status.auto_revert_enabled ? 'Enabled' : 'Disabled';
+                autoRevert.className = `status-value ${status.auto_revert_enabled ? 'status-good' : 'status-warning'}`;
+
+                document.getElementById('lastUpdated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+            } catch (error) {
+                showMessage('Failed to load status', 'error');
+            }
+        }
+
+        async function restartVM() {
+            if (!confirm('Restart VM? This will revert to snapshot.')) return;
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '↻ Restarting<span class="loading"></span>';
+            try {
+                await apiCall('/api/v1/vm/restart');
+                showMessage('VM restarted successfully');
+                setTimeout(loadStatus, 2000);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '↻ Restart VM';
+            }
+        }
+
+        async function startVM() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '▶ Starting<span class="loading"></span>';
+            try {
+                await apiCall('/api/v1/vm/start');
+                showMessage('VM started successfully');
+                setTimeout(loadStatus, 2000);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '▶ Start VM';
+            }
+        }
+
+        async function stopVM() {
+            if (!confirm('Stop VM? This will force power off.')) return;
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '⏹ Stopping<span class="loading"></span>';
+            try {
+                await apiCall('/api/v1/vm/stop');
+                showMessage('VM stopped successfully');
+                setTimeout(loadStatus, 2000);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⏹ Stop VM';
+            }
+        }
+
+        async function createSnapshot(name = null) {
+            const endpoint = name ? `/api/v1/snapshot/create?snapshot_name=${encodeURIComponent(name)}` : '/api/v1/snapshot/create';
+            const btn = event.target;
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.innerHTML = '💾 Creating<span class="loading"></span>';
+            try {
+                await apiCall(endpoint);
+                showMessage(`Snapshot "${name || 'ready'}" created successfully`);
+                setTimeout(loadStatus, 1000);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        async function enableAutoRevert() {
+            const btn = event.target;
+            btn.disabled = true;
+            try {
+                await apiCall('/api/v1/revert/enable');
+                showMessage('Auto-revert enabled');
+                setTimeout(loadStatus, 500);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function disableAutoRevert() {
+            if (!confirm('Disable auto-revert? Manual intervention will be required on failures.')) return;
+            const btn = event.target;
+            btn.disabled = true;
+            try {
+                await apiCall('/api/v1/revert/disable');
+                showMessage('Auto-revert disabled - manual intervention required', 'error');
+                setTimeout(loadStatus, 500);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        // Load status on page load and every 5 seconds
+        loadStatus();
+        setInterval(loadStatus, 5000);
+    </script>
+</body>
+</html>
