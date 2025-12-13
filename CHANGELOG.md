@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Mac OS 9 guest monitoring scripts** - Complete AppleScript-based monitoring system for Mac OS 9 VMs
+  - `heartbeat.applescript` - Core 1-second heartbeat monitor with process supervision
+  - `idle-monitor.applescript` - User inactivity detection via screen saver activation
+  - `process-watchdog.applescript` - Application monitoring and window management
+  - `restart-monitors.applescript` - Utility to restart all monitoring scripts
+  - `lib/http-helper.applescript` - Shared HTTP communication library
+  - URL Access Scripting for HTTP requests (built-in, no dependencies)
+  - Automatic fallback to curl if available
+  - Compatible with Mac OS 9.0, 9.1, and 9.2.2
+  - Stay-open applications for background monitoring
+  - Network connectivity checking and retry logic
+  - Comprehensive installation and troubleshooting documentation
+
 ### Planned
-- Support for Mac OS 9 guest monitoring scripts (AppleScript-based)
 - Support for Linux guest monitoring scripts (shell script-based)
 - WebSocket API for real-time status updates
 - Centralized logging dashboard for multiple exhibition hosts
