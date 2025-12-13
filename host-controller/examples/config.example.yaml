@@ -28,12 +28,14 @@ log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # QEMU Guest Agent Configuration
 check_qemu_agent: true      # Verify VM responsiveness using QEMU guest agent
+                             # Set to false if QEMU guest agent is not installed in the VM
 qemu_agent_timeout: 5.0     # Timeout for QEMU guest agent commands
 
 # Notes:
 # - All time values are in seconds
 # - VM name must match exactly as shown in 'virsh list --all'
-# - QEMU guest agent must be installed and running in the VM
+# - QEMU guest agent is optional but recommended for VM health checks
+#   If not installed, set check_qemu_agent: false above
 # - Snapshot 'ready' must be created manually after VM setup
 #
 # Environment Variable Override:

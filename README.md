@@ -16,7 +16,20 @@ The system combines three technical approaches:
 2. **Snapshots** - Create restorable system states ("ready" snapshots)
 3. **Automated Monitoring** - Detect failures and automatically revert to known-good states
 
-When errors occur (crashes, frozen windows, timeout), the system automatically reverts the VM to its "ready" snapshot within seconds, ensuring continuous operation without human intervention.
+When errors occur (crashes, frozen windows, timeout, manual shutdowns), the system automatically reverts the VM to its "ready" snapshot within seconds, ensuring continuous operation without human intervention.
+
+### Robustness Features
+
+**Automatic VM Management**:
+- On controller startup, the VM is automatically started and reverted to the "ready" snapshot, ensuring a clean initial state
+- If someone manually shuts down the VM (e.g., via `virsh destroy`), the controller detects this within 0.5 seconds and automatically restarts it
+- All recovery operations revert to the known-good snapshot state, preventing configuration drift
+
+**Multiple Recovery Triggers**:
+- Heartbeat timeout (no signal from guest for 15 seconds)
+- VM shutdown detection (manual or unexpected)
+- QEMU guest agent unresponsive (optional)
+- Application-specific error signals from guest scripts
 
 ## Architecture
 
@@ -124,7 +137,9 @@ exhibition-vm-controller/
 
 ### Automated Error Recovery
 
-- **QEMU Guest Agent Monitoring**: Low-level VM responsiveness checks
+- **Auto-Start on Startup**: VM automatically starts and reverts to clean state when controller starts
+- **VM State Monitoring**: Detects if VM is manually shut down and automatically restarts it
+- **QEMU Guest Agent Monitoring**: Low-level VM responsiveness checks (optional)
 - **Heartbeat Monitoring**: Application-level health verification
 - **Idle Detection**: Automatic reset after configurable inactivity period
 - **Process Monitoring**: Verifies critical applications are running
@@ -168,7 +183,9 @@ See `docs/api-reference.md` for complete API documentation.
 - virt-viewer for VM display
 
 **Guest System**:
-- **QEMU Guest Agent** installed and running (critical!)
+- **QEMU Guest Agent**: Optional but recommended for VM health monitoring
+  - Windows: Available in [virtio-win drivers](https://github.com/virtio-win/kvm-guest-drivers-windows)
+  - If not installed, set `check_qemu_agent: false` in config
 - Ability to run monitoring scripts
 - Network connectivity to host
 
@@ -200,10 +217,11 @@ poetry run python -m vm_controller.api
    - Install OS and artwork application
    - Configure networking (bridged or NAT)
 
-2. **Install QEMU Guest Agent** (REQUIRED):
-   - **Windows**: Install `qemu-ga` from VirtIO drivers ISO
+2. **Install QEMU Guest Agent** (OPTIONAL but recommended):
+   - **Windows**: Install `qemu-ga` from [VirtIO drivers ISO](https://github.com/virtio-win/kvm-guest-drivers-windows)
    - **Linux**: `apt install qemu-guest-agent` or equivalent
    - **Mac OS**: May require manual compilation or alternatives
+   - **If not installing**: Set `check_qemu_agent: false` in `config.yaml` to skip agent checks
 
 3. **Install Guest Scripts**:
    - Copy scripts from `guest-scripts/windows-xp/` to VM
@@ -212,8 +230,9 @@ poetry run python -m vm_controller.api
 
 4. **Test and Create Snapshot**:
    ```bash
-   # Verify QEMU guest agent is working
+   # Verify QEMU guest agent is working (if installed)
    virsh qemu-agent-command YOUR_VM_NAME '{"execute":"guest-ping"}'
+   # If this fails, set check_qemu_agent: false in config.yaml
 
    # Test heartbeat is working
    curl http://localhost:8000/api/v1/status
@@ -283,7 +302,7 @@ This framework was developed for and tested with:
 
 ### Guest System
 
-- **QEMU Guest Agent**: Required for VM health monitoring
+- **QEMU Guest Agent**: Optional but recommended for VM health monitoring. If not installed, set `check_qemu_agent: false` in config.yaml
 - **Monitoring Scripts**: AutoIT (Windows), AppleScript (Mac), or shell scripts
 - **Network**: Ability to send HTTP requests to host
 - **Snapshot Support**: Guest OS must be compatible with libvirt snapshots
@@ -301,7 +320,7 @@ Key configurable values (all adjustable in `config.yaml`):
 | `idle_timeout` | 12-15min | Inactivity before auto-reset |
 | `auto_revert_enabled` | true | Enable automatic revert on failure |
 | `api_port` | 8000 | REST API port |
-| `check_qemu_agent` | true | Verify VM via QEMU guest agent |
+| `check_qemu_agent` | true | Verify VM via QEMU guest agent (set to false if agent not installed) |
 
 ## Documentation
 

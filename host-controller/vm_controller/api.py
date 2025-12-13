@@ -110,8 +110,10 @@ async def lifespan(app: FastAPI):
             logger.error("Heartbeat timeout - initiating VM restart")
             try:
                 # Run synchronous VM restart in thread pool
+                # Skip waiting for VM ready if QEMU agent checking is disabled
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, vm_manager.restart_vm)
+                wait_for_ready = config.check_qemu_agent
+                await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
                 logger.info("VM restarted successfully after heartbeat timeout")
 
                 # Wait for VM to be ready, then re-enable heartbeat monitoring
@@ -128,24 +130,40 @@ async def lifespan(app: FastAPI):
                 "manual intervention required"
             )
 
+    # Initialize VM manager first (needed for heartbeat monitor)
+    vm_manager = VMManager(
+        vm_name=config.vm_name,
+        snapshot_name=config.snapshot_name,
+        auto_revert_enabled=config.auto_revert_enabled,
+        on_reset_callback=None,  # Will be set after heartbeat monitor is created
+    )
+
+    # Initialize heartbeat monitor with VM state monitoring
     heartbeat_monitor = HeartbeatMonitor(
         timeout=config.heartbeat_timeout,
         check_interval=config.heartbeat_check_interval,
         on_timeout_callback=on_heartbeat_timeout,
+        vm_manager=vm_manager,
     )
 
-    # Initialize VM manager
+    # Set VM reset callback now that heartbeat monitor exists
     def on_vm_reset():
         """Callback when VM is reset."""
         if heartbeat_monitor:
             heartbeat_monitor.reset()
 
-    vm_manager = VMManager(
-        vm_name=config.vm_name,
-        snapshot_name=config.snapshot_name,
-        auto_revert_enabled=config.auto_revert_enabled,
-        on_reset_callback=on_vm_reset,
-    )
+    vm_manager.on_reset_callback = on_vm_reset
+
+    # Ensure VM is running and reverted to clean state on startup
+    logger.info("Ensuring VM is in clean state on startup...")
+    try:
+        loop = asyncio.get_event_loop()
+        wait_for_ready = config.check_qemu_agent
+        await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
+        logger.info("VM started and reverted to snapshot successfully")
+    except Exception as e:
+        logger.error(f"Failed to start VM on startup: {e}", exc_info=True)
+        raise
 
     # Start heartbeat monitoring
     await heartbeat_monitor.start_monitoring()
@@ -168,7 +186,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Exhibition VM Controller API",
     description="REST API for controlling VMs in exhibition environments",
-    version="0.1.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -180,7 +198,7 @@ async def root():
     return MessageResponse(
         message="Exhibition VM Controller API",
         details={
-            "version": "0.1.0",
+            "version": "1.1.0",
             "documentation": "/docs",
             "status": "/api/v1/status",
         },
@@ -303,7 +321,8 @@ async def restart_vm():
             heartbeat_monitor.disable()
 
         loop = asyncio.get_event_loop()
-        success = await loop.run_in_executor(None, vm_manager.restart_vm)
+        wait_for_ready = config.check_qemu_agent
+        success = await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
 
         if success and heartbeat_monitor:
             # Wait before re-enabling heartbeat

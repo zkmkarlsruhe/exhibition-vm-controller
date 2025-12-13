@@ -37,6 +37,7 @@ class HeartbeatMonitor:
         timeout: float = 15.0,
         check_interval: float = 0.5,
         on_timeout_callback: Optional[Callable] = None,
+        vm_manager: Optional[object] = None,
     ):
         """
         Initialize HeartbeatMonitor.
@@ -45,10 +46,12 @@ class HeartbeatMonitor:
             timeout: Seconds without heartbeat before failure (default: 15.0)
             check_interval: Seconds between timeout checks (default: 0.5)
             on_timeout_callback: Function to call when timeout occurs
+            vm_manager: Optional VMManager instance for VM state monitoring
         """
         self.timeout = timeout
         self.check_interval = check_interval
         self.on_timeout_callback = on_timeout_callback
+        self.vm_manager = vm_manager
 
         self.enabled = False
         self.last_heartbeat: Optional[float] = None
@@ -56,7 +59,8 @@ class HeartbeatMonitor:
 
         logger.info(
             f"Initialized HeartbeatMonitor (timeout: {timeout}s, "
-            f"check_interval: {check_interval}s)"
+            f"check_interval: {check_interval}s, "
+            f"vm_state_monitoring: {vm_manager is not None})"
         )
 
     def receive_heartbeat(self) -> None:
@@ -174,17 +178,46 @@ class HeartbeatMonitor:
 
     async def _monitoring_loop(self) -> None:
         """
-        Internal monitoring loop that checks for timeouts.
+        Internal monitoring loop that checks for timeouts and VM state.
 
-        Runs continuously until cancelled, checking for heartbeat timeouts
-        at the configured check_interval.
+        Runs continuously until cancelled, checking for:
+        - Heartbeat timeouts
+        - VM state (if vm_manager is provided)
         """
         logger.debug("Heartbeat monitoring loop started")
 
         try:
             while True:
+                # Check if VM is running (if vm_manager is available and monitoring is enabled)
+                if self.enabled and self.vm_manager is not None:
+                    try:
+                        is_running = self.vm_manager.is_running()
+                        if not is_running:
+                            logger.error("VM is not running, triggering recovery")
+
+                            # Disable monitoring before callback
+                            self.disable()
+
+                            if self.on_timeout_callback:
+                                try:
+                                    result = self.on_timeout_callback()
+                                    if asyncio.iscoroutine(result):
+                                        await result
+                                except Exception as e:
+                                    logger.error(f"Error in VM state recovery callback: {e}", exc_info=True)
+
+                            # Skip heartbeat check this iteration since we already triggered recovery
+                            await asyncio.sleep(self.check_interval)
+                            continue
+                    except Exception as e:
+                        logger.debug(f"Error checking VM state: {e}")
+
+                # Check for heartbeat timeout
                 if self.is_timed_out():
                     logger.error("Heartbeat timeout detected, triggering recovery")
+
+                    # Disable monitoring before callback to prevent multiple simultaneous timeouts
+                    self.disable()
 
                     if self.on_timeout_callback:
                         try:
@@ -196,9 +229,6 @@ class HeartbeatMonitor:
                             logger.error(f"Error in timeout callback: {e}", exc_info=True)
                     else:
                         logger.warning("No timeout callback configured")
-
-                    # Disable monitoring after timeout to prevent rapid restarts
-                    self.disable()
 
                 await asyncio.sleep(self.check_interval)
 

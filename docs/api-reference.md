@@ -37,7 +37,7 @@ Get API information and version.
 {
   "message": "Exhibition VM Controller API",
   "details": {
-    "version": "0.1.0",
+    "version": "1.1.0",
     "documentation": "/docs",
     "status": "/api/v1/status"
   }

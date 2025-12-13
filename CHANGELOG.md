@@ -17,6 +17,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - VMware and VirtualBox backend support
 - Metrics collection and visualization (Prometheus/Grafana integration)
 
+## [1.1.0] - 2025-12-13
+
+### Added
+- **Automatic VM startup on controller launch** - VM now automatically starts and reverts to "ready" snapshot when controller starts, ensuring clean initial state every time (commit 1551d56)
+- **VM state monitoring and auto-recovery** - System continuously monitors VM state (every 0.5s) and automatically restarts if VM is manually shut down or crashes (commit 1551d56)
+- Poetry script shortcuts (`vm-controller`, `vmctl`) for easier execution (commit 91e7871)
+- Link to virtio-win drivers for Windows guest setup in documentation (commit 91e7871)
+
+### Changed
+- **QEMU guest agent is now optional** - System works perfectly without guest agent installed; set `check_qemu_agent: false` in config (commit 91e7871)
+- Improved configuration documentation with clearer guidance on QEMU guest agent usage (commit 91e7871)
+- HeartbeatMonitor now accepts `vm_manager` parameter for VM state monitoring (commit 1551d56)
+
+### Fixed
+- Fixed 5-minute timeout when QEMU agent checking is disabled - now skips wait entirely, reducing revert time from 300s to 4s (commit 91e7871)
+- Fixed race condition in heartbeat monitoring enable/disable cycle after timeout callback (commit 91e7871)
+- VM restart now properly skips QEMU agent wait when `check_qemu_agent: false` (commit 91e7871)
+
+### Performance
+- VM revert time reduced from 300s to 4s when QEMU agent is disabled
+- Manual VM shutdown detection: 0.5 seconds
+- Auto-recovery from shutdown: ~4 seconds
+- Auto-revert cycle: ~29 seconds (15s timeout + 4s revert + 10s delay)
+
 ## [1.0.0] - 2025-12-09
 
 ### Added
@@ -210,7 +234,7 @@ If you use this software in academic work, please cite:
   author = {Schütze, Marc},
   title = {Exhibition VM Controller: Snapshot-Based Conservation of Digital Artworks},
   year = {2025},
-  version = {1.0.0},
+  version = {1.1.0},
   organization = {ZKM | Center for Art and Media Karlsruhe},
   url = {https://github.com/zkmkarlsruhe/exhibition-vm-controller}
 }
@@ -220,4 +244,4 @@ See [CITATION.cff](CITATION.cff) for machine-readable citation metadata.
 
 ---
 
-*Last updated: 2025-12-09*
+*Last updated: 2025-12-13*

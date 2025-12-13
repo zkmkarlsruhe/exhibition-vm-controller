@@ -10,7 +10,7 @@ This framework provides tools for preserving and exhibiting historical digital
 artworks using virtual machines with snapshot-based error recovery.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.1.0"
 __author__ = "Marc Schütze"
 __email__ = "mschuetze@zkm.de"
 __organization__ = "ZKM | Center for Art and Media Karlsruhe"
