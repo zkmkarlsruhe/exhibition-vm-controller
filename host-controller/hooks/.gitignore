@@ -1,0 +1,8 @@
+# Ignore all hook scripts (custom per installation)
+polls/*.sh
+signals/*.sh
+
+# Except example files
+!polls/*.example.sh
+!signals/*.example.sh
+!*/README.md

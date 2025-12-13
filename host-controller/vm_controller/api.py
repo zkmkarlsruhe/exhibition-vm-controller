@@ -19,11 +19,12 @@ from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from vm_controller.config import Config
 from vm_controller.heartbeat_monitor import HeartbeatMonitor
+from vm_controller.plugins import PluginRegistry
 from vm_controller.vm_manager import VMManager
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 vm_manager: Optional[VMManager] = None
 heartbeat_monitor: Optional[HeartbeatMonitor] = None
 config: Optional[Config] = None
+plugin_registry: Optional[PluginRegistry] = None
 
 
 # Response Models
@@ -83,7 +85,7 @@ async def lifespan(app: FastAPI):
     On shutdown:
     - Stop monitoring loop
     """
-    global vm_manager, heartbeat_monitor, config
+    global vm_manager, heartbeat_monitor, config, plugin_registry
 
     # Startup
     logger.info("Starting Exhibition VM Controller API...")
@@ -153,6 +155,14 @@ async def lifespan(app: FastAPI):
             heartbeat_monitor.reset()
 
     vm_manager.on_reset_callback = on_vm_reset
+
+    # Initialize plugin registry and load plugins
+    plugin_registry = PluginRegistry(
+        plugins_dir=Path("plugins"),
+        hooks_dir=Path("hooks"),
+    )
+    plugin_registry.load_plugins()
+    logger.info("Plugin system initialized")
 
     # Ensure VM is running and reverted to clean state on startup
     logger.info("Ensuring VM is in clean state on startup...")
@@ -477,6 +487,103 @@ async def get_heartbeat_status():
         )
 
     return heartbeat_monitor.get_status()
+
+
+# ==============================================================================
+# Plugin System Endpoints
+# ==============================================================================
+
+
+@app.get("/api/v1/poll/{resource}")
+async def poll_resource(resource: str):
+    """
+    Poll current state of a resource.
+
+    This endpoint returns plain text (single word) for easy parsing by AutoIt.
+    Plugins can register poll providers for custom resources.
+
+    Args:
+        resource: Resource name (e.g., "button", "command")
+
+    Returns:
+        Plain text response with current state (e.g., "pressed", "released", "none")
+
+    Examples:
+        GET /api/v1/poll/button -> "pressed"
+        GET /api/v1/poll/command -> "reboot"
+    """
+    if not plugin_registry:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Plugin system not initialized",
+        )
+
+    value = plugin_registry.get_poll_value(resource)
+    return PlainTextResponse(content=value)
+
+
+@app.get("/api/v1/signal/{event}")
+async def signal_event(event: str, value: str = ""):
+    """
+    Receive signal from guest (fire-and-forget notification).
+
+    This endpoint accepts signals from AutoIt scripts and triggers registered handlers.
+    Returns immediately without waiting for handler completion.
+
+    Args:
+        event: Event name (e.g., "ui-state", "application-loaded")
+        value: Optional signal value
+
+    Returns:
+        Plain text "ok" response
+
+    Examples:
+        GET /api/v1/signal/ui-state?value=ready
+        GET /api/v1/signal/user-activity?value=detected
+    """
+    if not plugin_registry:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Plugin system not initialized",
+        )
+
+    # Handle signal asynchronously (fire-and-forget)
+    plugin_registry.handle_signal(event, value)
+
+    return PlainTextResponse(content="ok")
+
+
+@app.get("/api/v1/poll/{resource}/set")
+@app.post("/api/v1/poll/{resource}/set")
+async def set_poll_value(resource: str, value: str):
+    """
+    Set poll value for external systems (e.g., Arduino controllers).
+
+    This endpoint allows external systems to set state that AutoIt can poll.
+    Useful for hardware integration without Python plugins.
+
+    Args:
+        resource: Resource name
+        value: New value as string
+
+    Returns:
+        JSON confirmation
+
+    Examples:
+        GET /api/v1/poll/button/set?value=pressed
+        POST /api/v1/poll/button/set?value=released
+    """
+    if not plugin_registry:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Plugin system not initialized",
+        )
+
+    plugin_registry.set_poll_value(resource, value)
+
+    return MessageResponse(
+        message=f"Poll value '{resource}' set to '{value}'",
+    )
 
 
 def main():
