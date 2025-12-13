@@ -16,8 +16,23 @@ This is the host controller component that runs on the physical Linux host machi
 
 - Python 3.10 or higher
 - Poetry for dependency management
-- libvirt and QEMU/KVM installed
-- Active libvirt VM configured with QEMU guest agent
+- libvirt-clients (provides `virsh` command)
+- QEMU/KVM with an active VM configured with QEMU guest agent
+
+### System Dependencies
+
+Install libvirt tools:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libvirt-clients
+
+# Fedora/RHEL
+sudo dnf install libvirt-client
+
+# Arch Linux
+sudo pacman -S libvirt
+```
 
 ### Using Poetry (Recommended)
 
@@ -26,7 +41,7 @@ This is the host controller component that runs on the physical Linux host machi
 curl -sSL https://install.python.org/poetry.py | python3 -
 
 # Install dependencies
-poetry install
+poetry install --no-root
 
 # Run the controller
 poetry run python -m vm_controller.api
