@@ -15,12 +15,14 @@ This project was developed at ZKM | Center for Art and Media Karlsruhe for the e
 - **Daniel Heiss** - Technical restoration and collaboration
 - **Matthieu Vlaminck** - Technical restoration and collaboration
 - **Leonie Rök** - Technical restoration and collaboration
+- **Hugo Dünger** - Technical collaboration
 - **Matthias Gommel** - Technical project management
 
 ### Curators
 - **Laura C. Schmidt** - Curator
 - **Inge Hinterwaldner** - Curator
 - **Daniela Hönigsberg** - Curator
+- **Anna Feil** - Curatorial intern
 
 ### Artists
 Special thanks to the artists whose works were restored using this framework:
@@ -37,9 +39,11 @@ Special thanks to the artists whose works were restored using this framework:
 - **Karlsruher Institut für Technologie (KIT)**
 
 ### Funding
-This research was supported by:
-- **Deutsche Forschungsgemeinschaft (DFG)**
-- **European Research Council (ERC)**
+The underlying research was funded by:
+- **Deutsche Forschungsgemeinschaft (DFG)** - German Research Foundation
+- **European Research Council (ERC)** - Under the European Union's Horizon 2020 research and innovation programme (grant agreement COSE, No. 101045376)
+
+This software was developed by ZKM | Center for Art and Media Karlsruhe, building upon research conducted at Karlsruhe Institute of Technology (KIT) supported by these grants.
 
 ### Inspiration and Prior Work
 - **Rhizome** - For pioneering work in digital art preservation and emulation-based conservation
@@ -52,4 +56,4 @@ For more information on how to contribute, see [CONTRIBUTING.md](CONTRIBUTING.md
 
 ---
 
-Last updated: 2025-12-09
+Last updated: 2025-12-14

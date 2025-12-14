@@ -25,9 +25,19 @@
       "type": "Other"
     },
     {
+      "name": "Dünger, Hugo",
+      "affiliation": "ZKM | Center for Art and Media Karlsruhe",
+      "type": "Other"
+    },
+    {
       "name": "Gommel, Matthias",
       "affiliation": "ZKM | Center for Art and Media Karlsruhe",
       "type": "ProjectManager"
+    },
+    {
+      "name": "Feil, Anna",
+      "affiliation": "ZKM | Center for Art and Media Karlsruhe",
+      "type": "Other"
     }
   ],
   "keywords": [
@@ -59,10 +69,12 @@
   ],
   "grants": [
     {
-      "id": "DFG"
+      "id": "10.13039/501100001659",
+      "title": "Deutsche Forschungsgemeinschaft (DFG) - Underlying research"
     },
     {
-      "id": "ERC"
+      "id": "info:eu-repo/grantAgreement/EC/H2020/101045376",
+      "title": "European Research Council (ERC) - COSE (grant No. 101045376) - Underlying research"
     }
   ],
   "communities": [

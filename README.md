@@ -379,10 +379,10 @@ mschuetze@zkm.de
 
 This software was created within the framework of the exhibition *Choose Your Filter! Browser Art since the Beginnings of the World Wide Web* at ZKM | Center for Art and Media Karlsruhe in cooperation with the Karlsruhe Institute of Technology (KIT).
 
-**Funding**: The German Research Foundation (DFG) and the European Research Council (ERC, under the European Union's Horizon 2020 research and innovation programme under grant agreement COSE, No. 101045376) funded the research projects underlying the exhibition.
+**Funding**: The German Research Foundation (DFG) and the European Research Council (ERC, under the European Union's Horizon 2020 research and innovation programme under grant agreement COSE, No. 101045376) funded the underlying research at Karlsruhe Institute of Technology (KIT).
 
-**Developed by**: Marc Schütze at ZKM | Center for Art and Media Karlsruhe in collaboration with Daniel Heiss, Matthieu Vlaminck, and Leonie Rök. Technical project management by Matthias Gommel.
+**Developed by**: Marc Schütze at ZKM | Center for Art and Media Karlsruhe in collaboration with Daniel Heiss, Matthieu Vlaminck, Leonie Rök, and Hugo Dünger. Technical project management by Matthias Gommel.
 
-**Curated by**: Laura C. Schmidt, Inge Hinterwaldner, and Daniela Hönigsberg.
+**Curated by**: Laura C. Schmidt, Inge Hinterwaldner, and Daniela Hönigsberg. Curatorial intern: Anna Feil.
 
 Special thanks to ZKM for the opportunity to conduct this research and develop the methods described here, and to Rhizome for pioneering work in digital art preservation and emulation-based conservation.

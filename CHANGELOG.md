@@ -284,7 +284,7 @@ If you use this software in academic work, please cite:
   author = {Schütze, Marc},
   title = {Exhibition VM Controller: Snapshot-Based Conservation of Digital Artworks},
   year = {2025},
-  version = {1.1.0},
+  version = {1.3.0},
   organization = {ZKM | Center for Art and Media Karlsruhe},
   url = {https://github.com/zkmkarlsruhe/exhibition-vm-controller}
 }
@@ -294,4 +294,4 @@ See [CITATION.cff](CITATION.cff) for machine-readable citation metadata.
 
 ---
 
-*Last updated: 2025-12-13*
+*Last updated: 2025-12-14*

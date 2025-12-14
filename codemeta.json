@@ -6,10 +6,10 @@
   "identifier": "exhibition-vm-controller",
   "codeRepository": "https://github.com/zkmkarlsruhe/exhibition-vm-controller",
   "license": "https://spdx.org/licenses/MIT",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "dateCreated": "2025-12-09",
   "datePublished": "2025-12-09",
-  "dateModified": "2025-12-13",
+  "dateModified": "2025-12-14",
   "author": [
     {
       "@type": "Person",
@@ -38,13 +38,17 @@
   "funder": [
     {
       "@type": "Organization",
-      "name": "Deutsche Forschungsgemeinschaft (DFG)"
+      "name": "Deutsche Forschungsgemeinschaft (DFG)",
+      "@id": "https://ror.org/018mejw64"
     },
     {
       "@type": "Organization",
-      "name": "European Research Council (ERC)"
+      "name": "European Research Council (ERC)",
+      "@id": "https://ror.org/0472cxd90",
+      "identifier": "https://cordis.europa.eu/project/id/101045376"
     }
   ],
+  "funding": "This software builds upon research funded by the German Research Foundation (DFG) and the European Research Council (ERC) under the European Union's Horizon 2020 research and innovation programme (grant agreement COSE, No. 101045376). The software was developed by ZKM | Center for Art and Media Karlsruhe in collaboration with Karlsruhe Institute of Technology (KIT).",
   "keywords": [
     "digital art conservation",
     "virtual machines",

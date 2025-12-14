@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
 title: "Exhibition VM Controller: Snapshot-Based Conservation of Digital Artworks"
-abstract: "A framework for the conservation and autonomous exhibition operation of historical digital artworks using virtual machines with snapshot-based error recovery. This system combines virtualization, automated monitoring, and snapshot-based restoration to enable unattended operation of fragile, internet-dependent artworks in museum contexts."
+abstract: "A framework for the conservation and autonomous exhibition operation of historical digital artworks using virtual machines with snapshot-based error recovery. This system combines virtualization, automated monitoring, and snapshot-based restoration to enable unattended operation of fragile, internet-dependent artworks in museum contexts. Developed by ZKM | Center for Art and Media Karlsruhe, building upon research conducted at Karlsruhe Institute of Technology (KIT)."
 authors:
   - family-names: "Schütze"
     given-names: "Marc"
@@ -22,5 +22,10 @@ keywords:
   - "generative art"
   - "internet art"
 license: MIT
-version: "1.2.0"
-date-released: "2025-12-09"
+references:
+  - type: grant
+    title: "Underlying research funded by German Research Foundation (DFG)"
+  - type: grant
+    title: "Underlying research funded by European Research Council (ERC) under Horizon 2020 (grant agreement COSE, No. 101045376)"
+version: "1.3.0"
+date-released: "2025-12-13"
