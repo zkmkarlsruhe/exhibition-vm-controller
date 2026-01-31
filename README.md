@@ -1,4 +1,15 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zkmkarlsruhe/zkm-open-source/main/assets/zkm-logo-light.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/zkmkarlsruhe/zkm-open-source/main/assets/zkm-logo.svg">
+    <img alt="ZKM" src="https://raw.githubusercontent.com/zkmkarlsruhe/zkm-open-source/main/assets/zkm-logo.svg" width="120">
+  </picture>
+</p>
+
 # Exhibition VM Controller
+
+[![ZKM](https://img.shields.io/badge/ZKM-Karlsruhe-blue)](https://zkm.de)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 A framework for the conservation and autonomous exhibition operation of historical digital artworks using virtual machines with snapshot-based error recovery.
 
@@ -386,3 +397,7 @@ This software was created within the framework of the exhibition *Choose Your Fi
 **Curated by**: Laura C. Schmidt, Inge Hinterwaldner, and Daniela Hönigsberg. Curatorial intern: Anna Feil.
 
 Special thanks to ZKM for the opportunity to conduct this research and develop the methods described here, and to Rhizome for pioneering work in digital art preservation and emulation-based conservation.
+
+---
+
+Part of [ZKM Open Source](https://github.com/zkmkarlsruhe)
