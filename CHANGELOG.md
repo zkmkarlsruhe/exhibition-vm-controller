@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics collection and visualization (Prometheus/Grafana integration)
 - Modular plugin system for custom polling and signaling handlers
 
+## [1.3.1] - 2026-02-15
+
+### Changed
+- Added author ORCID to CITATION.cff and .zenodo.json for improved academic discoverability
+
 ## [1.3.0] - 2025-12-13
 
 ### Added
@@ -284,7 +289,7 @@ If you use this software in academic work, please cite:
   author = {Schütze, Marc},
   title = {Exhibition VM Controller: Snapshot-Based Conservation of Digital Artworks},
   year = {2025},
-  version = {1.3.0},
+  version = {1.3.1},
   organization = {ZKM | Center for Art and Media Karlsruhe},
   url = {https://github.com/zkmkarlsruhe/exhibition-vm-controller}
 }
@@ -294,4 +299,4 @@ See [CITATION.cff](CITATION.cff) for machine-readable citation metadata.
 
 ---
 
-*Last updated: 2025-12-14*
+*Last updated: 2026-02-15*
