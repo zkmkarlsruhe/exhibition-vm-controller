@@ -8,6 +8,7 @@ authors:
     given-names: "Marc"
     email: "mschuetze@zkm.de"
     affiliation: "ZKM | Center for Art and Media Karlsruhe"
+    orcid: "https://orcid.org/0009-0007-0718-4251"
 repository-code: "https://github.com/zkmkarlsruhe/exhibition-vm-controller"
 url: "https://github.com/zkmkarlsruhe/exhibition-vm-controller"
 keywords:
