@@ -1,4 +1,5 @@
 {
+  "doi": "10.5281/zenodo.18652760",
   "title": "Exhibition VM Controller: Snapshot-Based Conservation of Digital Artworks",
   "description": "A framework for the conservation and autonomous exhibition operation of historical digital artworks using virtual machines with snapshot-based error recovery. This system combines virtualization, automated monitoring, and snapshot-based restoration to enable unattended operation of fragile, internet-dependent artworks in museum contexts. Developed at ZKM | Center for Art and Media Karlsruhe for the exhibition 'Choose Your Filter! Browser Art since the Beginnings of the World Wide Web' (February–August 2025).",
   "creators": [
@@ -67,16 +68,7 @@
       "identifier": "https://github.com/zkmkarlsruhe/exhibition-vm-controller"
     }
   ],
-  "grants": [
-    {
-      "id": "10.13039/501100001659",
-      "title": "Deutsche Forschungsgemeinschaft (DFG) - Underlying research"
-    },
-    {
-      "id": "info:eu-repo/grantAgreement/EC/H2020/101045376",
-      "title": "European Research Council (ERC) - COSE (grant No. 101045376) - Underlying research"
-    }
-  ],
+  "notes": "Funding: The German Research Foundation (DFG) and the European Research Council (ERC, under the European Union's Horizon 2020 research and innovation programme, grant agreement COSE, No. 101045376) funded the underlying research at Karlsruhe Institute of Technology (KIT).",
   "communities": [
     {
       "identifier": "digital-humanities"

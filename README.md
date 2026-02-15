@@ -3,6 +3,7 @@
 [![ZKM](https://img.shields.io/badge/ZKM-Karlsruhe-blue)](https://zkm.de)
 [![ZKM Open Source](https://img.shields.io/badge/ZKM-Open%20Source-blue)](https://github.com/zkmkarlsruhe)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.18652760-blue)](https://doi.org/10.5281/zenodo.18652760)
 
 A framework for the conservation and autonomous exhibition operation of historical digital artworks using virtual machines with snapshot-based error recovery.
 
