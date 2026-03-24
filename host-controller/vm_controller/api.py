@@ -124,7 +124,7 @@ async def lifespan(app: FastAPI):
                 # Wait for VM to be ready, then re-enable heartbeat monitoring
                 await asyncio.sleep(config.vm_startup_heartbeat_delay)
                 if heartbeat_monitor:
-                    heartbeat_monitor.enable()
+                    heartbeat_monitor.reset()
                     logger.info("Heartbeat monitoring re-enabled")
 
             except Exception as e:
@@ -308,7 +308,7 @@ async def start_vm():
     try:
         # Clear manual stop flag to re-enable auto-restart
         if heartbeat_monitor:
-            heartbeat_monitor.clear_manual_stop()
+            heartbeat_monitor.enable()
 
         # Run in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
@@ -338,7 +338,7 @@ async def stop_vm():
     try:
         # Mark as manual stop to prevent auto-restart
         if heartbeat_monitor:
-            heartbeat_monitor.set_manual_stop()
+            heartbeat_monitor.disable()
 
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, vm_manager.stop_vm)
@@ -379,7 +379,6 @@ async def restart_vm(request: Request):
 
     try:
         if heartbeat_monitor:
-            heartbeat_monitor.clear_manual_stop()
             heartbeat_monitor.disable()
 
         loop = asyncio.get_event_loop()
@@ -390,8 +389,9 @@ async def restart_vm(request: Request):
         if plugin_registry:
             plugin_registry.run_post_restart()
 
-        if success and heartbeat_monitor:
-            # Wait before re-enabling heartbeat
+        if heartbeat_monitor:
+            heartbeat_monitor.reset()
+            # Wait for VM to boot before re-enabling
             await asyncio.sleep(config.vm_startup_heartbeat_delay)
             heartbeat_monitor.enable()
 
