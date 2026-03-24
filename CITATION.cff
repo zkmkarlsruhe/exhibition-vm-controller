@@ -29,5 +29,5 @@ references:
   - type: grant
     title: "Underlying research funded by European Research Council (ERC) under Horizon 2020 (grant agreement COSE, No. 101045376)"
 doi: "10.5281/zenodo.18652760"
-version: "1.3.1"
-date-released: "2026-02-15"
+version: "2.0.0"
+date-released: "2026-03-24"

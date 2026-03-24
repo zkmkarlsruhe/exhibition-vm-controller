@@ -12,7 +12,7 @@ YAML files, environment variables, and validation.
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -115,6 +115,12 @@ class Config(BaseSettings):
     log_format: str = Field(
         default="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         description="Log message format"
+    )
+
+    # Plugin Configuration
+    plugins: Optional[List[str]] = Field(
+        default=None,
+        description="List of plugin names to load (without .py). If not set, all plugins are loaded."
     )
 
     # QEMU Guest Agent Configuration

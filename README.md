@@ -150,6 +150,18 @@ exhibition-vm-controller/
 - **Process Monitoring**: Verifies critical applications are running
 - **Instant Recovery**: Revert to snapshot in 2-5 seconds
 
+### Plugin System
+
+Artwork-specific logic lives in plugins that hook into the core:
+- **Signal Handlers**: React to events from guest scripts (`/api/v1/signal/{event}`)
+- **Poll Providers**: Expose state for guest scripts to poll (`/api/v1/poll/{resource}`)
+- **State Providers**: Contribute to the aggregated state endpoint (`/api/v1/state`)
+- **SSE Events**: Push live updates to connected clients (`/api/v1/events`)
+- **Lifecycle Hooks**: Pre/post restart hooks, startup/shutdown hooks
+- **Web Serving**: Serve artwork-specific content (HTML, assets, etc.)
+
+Plugins auto-load from the `plugins/` directory. See `plugins/README.md` for details.
+
 ### Modular Guest Scripts
 
 Specialized scripts handle specific monitoring tasks:
@@ -160,12 +172,14 @@ Specialized scripts handle specific monitoring tasks:
 
 ### REST API
 
-The host controller provides a REST API for:
+All control routes live under `/api/v1/`:
 - **VM Control**: Start, stop, restart VMs
 - **Snapshot Management**: Create, delete, revert snapshots
 - **Heartbeat Monitoring**: View status and configure timeouts
+- **Signals & Polls**: Guest ↔ host communication for plugins
+- **State**: Aggregated plugin state
+- **Events**: Server-Sent Events stream for live updates
 - **Revert System**: Enable/disable automatic revert functionality
-- **Health Checks**: Monitor system and VM health
 
 See `docs/api-reference.md` for complete API documentation.
 
@@ -257,28 +271,40 @@ See `docs/getting-started.md` for detailed setup instructions.
 
 ### Check VM Status
 ```bash
-curl http://localhost:8000/api/v1/status
+curl http://localhost:8002/api/v1/status
+```
+
+### Plugin State
+```bash
+# Get aggregated state from all plugins
+curl http://localhost:8002/api/v1/state
+
+# Send a signal to plugin handlers
+curl http://localhost:8002/api/v1/signal/reset
+
+# Poll a resource
+curl http://localhost:8002/api/v1/poll/button
 ```
 
 ### Enable/Disable Auto-Revert
 ```bash
 # Disable automatic revert (for maintenance)
-curl -X POST http://localhost:8000/api/v1/revert/disable
+curl http://localhost:8002/api/v1/revert/disable
 
 # Enable automatic revert
-curl -X POST http://localhost:8000/api/v1/revert/enable
+curl http://localhost:8002/api/v1/revert/enable
 ```
 
 ### Manage Snapshots
 ```bash
 # Create new snapshot
-curl -X POST http://localhost:8000/api/v1/snapshot/create
+curl 'http://localhost:8002/api/v1/snapshot/create?snapshot_name=ready'
 
-# Delete snapshot
-curl -X DELETE http://localhost:8000/api/v1/snapshot/ready
+# List snapshots
+curl http://localhost:8002/api/v1/snapshots
 
 # Manual revert
-curl -X POST http://localhost:8000/api/v1/snapshot/revert
+curl http://localhost:8002/api/v1/vm/restart
 ```
 
 ## Use Cases

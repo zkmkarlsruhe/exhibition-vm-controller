@@ -10,9 +10,11 @@ This module provides the VMManager class for controlling virtual machines via
 libvirt, managing snapshots, and implementing automatic recovery mechanisms.
 """
 
+import ipaddress
 import logging
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from typing import List, Optional, Callable
 
 logger = logging.getLogger(__name__)
@@ -55,8 +57,12 @@ class VMManager:
         self.auto_revert_enabled = auto_revert_enabled
         self.on_reset_callback = on_reset_callback
 
+        # Discover VM network subnet from libvirt
+        self.vm_network = self._discover_vm_network()
+
         logger.info(
             f"Initializing VM Manager for VM '{vm_name}' with snapshot '{snapshot_name}'"
+            f" on network {self.vm_network or 'unknown'}"
         )
 
         # Check if snapshot exists
@@ -65,6 +71,58 @@ class VMManager:
                 f"Snapshot '{snapshot_name}' does not exist. "
                 f"VM control will be limited until snapshot is created."
             )
+
+    def _discover_vm_network(self) -> Optional[str]:
+        """Discover the VM's network subnet from libvirt.
+        Returns CIDR notation (e.g. '192.168.122.0/24') or None."""
+        try:
+            # Get the network name from the VM's interface
+            result = subprocess.run(
+                ["virsh", "domiflist", self.vm_name],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return None
+
+            network_name = None
+            for line in result.stdout.splitlines()[2:]:  # skip header
+                parts = line.split()
+                if len(parts) >= 3 and parts[1] == "network":
+                    network_name = parts[2]
+                    break
+
+            if not network_name:
+                return None
+
+            # Get the network's IP/netmask
+            result = subprocess.run(
+                ["virsh", "net-dumpxml", network_name],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return None
+
+            root = ET.fromstring(result.stdout)
+            ip_elem = root.find(".//ip")
+            if ip_elem is not None:
+                addr = ip_elem.get("address")
+                netmask = ip_elem.get("netmask")
+                if addr and netmask:
+                    network = ipaddress.IPv4Network(f"{addr}/{netmask}", strict=False)
+                    logger.info(f"Discovered VM network: {network}")
+                    return str(network)
+        except Exception as e:
+            logger.warning(f"Could not discover VM network: {e}")
+        return None
+
+    def is_from_vm(self, client_ip: str) -> bool:
+        """Check if a client IP belongs to the VM's network."""
+        if not self.vm_network:
+            return False
+        try:
+            return ipaddress.IPv4Address(client_ip) in ipaddress.IPv4Network(self.vm_network)
+        except ValueError:
+            return False
 
     def snapshot_exists(self) -> bool:
         """Check if the configured snapshot exists."""
@@ -185,6 +243,7 @@ class VMManager:
                 logger.error(f"Error stopping VM: {e.stderr}")
                 raise
 
+
     def start_vm(self) -> None:
         """
         Start the VM by reverting to the ready snapshot.
@@ -229,6 +288,33 @@ class VMManager:
                 check=True,
             )
             logger.info(f"VM '{self.vm_name}' started successfully")
+
+        # Flush conntrack entries for the VM's network to clear stale TCP state.
+        # After a snapshot revert, the VM resumes with TCP connections from before
+        # the snapshot. The kernel's conntrack table still has the old connection
+        # entries, causing packets with mismatched sequence numbers to be dropped.
+        self._flush_conntrack()
+
+    def _flush_conntrack(self) -> None:
+        """Flush conntrack entries for the VM network to clear stale TCP state.
+
+        After a snapshot revert the VM resumes with TCP connections from before
+        the snapshot.  The kernel's conntrack table still has the old entries,
+        causing packets with mismatched sequence numbers to be dropped.
+        """
+        try:
+            subnet = self.vm_network or "192.168.122.0/24"
+            subprocess.run(
+                ["sudo", "conntrack", "-D", "-s", subnet],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            logger.info("Flushed conntrack entries for VM network")
+        except FileNotFoundError:
+            logger.debug("conntrack command not found, skipping flush")
+        except Exception as e:
+            logger.debug(f"conntrack flush: {e}")
 
     def check_vm_responsiveness(self, timeout: float = 5.0) -> bool:
         """

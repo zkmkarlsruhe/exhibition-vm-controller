@@ -11,20 +11,23 @@ environments, including VM lifecycle management, snapshot operations, and
 heartbeat monitoring.
 """
 
+import argparse
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from vm_controller.config import Config
 from vm_controller.heartbeat_monitor import HeartbeatMonitor
+from vm_controller.plugins import PluginRegistry
 from vm_controller.vm_manager import VMManager
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,8 @@ logger = logging.getLogger(__name__)
 vm_manager: Optional[VMManager] = None
 heartbeat_monitor: Optional[HeartbeatMonitor] = None
 config: Optional[Config] = None
+plugin_registry: Optional[PluginRegistry] = None
+config_path: Path = Path(os.environ.get("VMCTL_CONFIG", "config.yaml"))
 
 
 # Response Models
@@ -84,13 +89,12 @@ async def lifespan(app: FastAPI):
     On shutdown:
     - Stop monitoring loop
     """
-    global vm_manager, heartbeat_monitor, config
+    global vm_manager, heartbeat_monitor, config, plugin_registry
 
     # Startup
     logger.info("Starting Exhibition VM Controller API...")
 
     # Load config
-    config_path = Path("config.yaml")
     if config_path.exists():
         config = Config.from_yaml(config_path)
     else:
@@ -107,20 +111,29 @@ async def lifespan(app: FastAPI):
     # Initialize heartbeat monitor with restart callback
     async def on_heartbeat_timeout():
         """Callback when heartbeat times out."""
-        logger.error("Heartbeat timeout - initiating VM restart")
-        try:
-            # Run synchronous VM restart in thread pool
-            # Skip waiting for VM ready if QEMU agent checking is disabled
-            loop = asyncio.get_event_loop()
-            wait_for_ready = config.check_qemu_agent
-            await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
-            logger.info("VM restarted successfully after heartbeat timeout")
+        if vm_manager and vm_manager.auto_revert_enabled:
+            logger.error("Heartbeat timeout - initiating VM restart")
+            try:
+                # Run synchronous VM restart in thread pool
+                # Skip waiting for VM ready if QEMU agent checking is disabled
+                loop = asyncio.get_event_loop()
+                wait_for_ready = config.check_qemu_agent
+                await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
+                logger.info("VM restarted successfully after heartbeat timeout")
 
-            # Wait before heartbeat timer resets
-            await asyncio.sleep(config.vm_startup_heartbeat_delay)
+                # Wait for VM to be ready, then re-enable heartbeat monitoring
+                await asyncio.sleep(config.vm_startup_heartbeat_delay)
+                if heartbeat_monitor:
+                    heartbeat_monitor.enable()
+                    logger.info("Heartbeat monitoring re-enabled")
 
-        except Exception as e:
-            logger.error(f"Failed to restart VM after timeout: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Failed to restart VM after timeout: {e}", exc_info=True)
+        else:
+            logger.warning(
+                "Heartbeat timeout detected but auto-revert is disabled - "
+                "manual intervention required"
+            )
 
     # Initialize VM manager first (needed for heartbeat monitor)
     vm_manager = VMManager(
@@ -146,7 +159,27 @@ async def lifespan(app: FastAPI):
 
     vm_manager.on_reset_callback = on_vm_reset
 
-    # Ensure VM is running and reverted to clean state on startup (if snapshot exists)
+    # Initialize plugin registry and load plugins
+    plugin_registry = PluginRegistry(
+        plugins_dir=Path("plugins"),
+        hooks_dir=Path("hooks"),
+    )
+    plugin_registry.load_plugins(config.plugins)
+
+    # Include plugin routers
+    for router in plugin_registry.get_routers():
+        app.include_router(router)
+
+    # Run plugin startup hooks
+    for hook in plugin_registry.get_startup_hooks():
+        if asyncio.iscoroutinefunction(hook):
+            await hook(app)
+        else:
+            hook(app)
+
+    logger.info("Plugin system initialized")
+
+    # Ensure VM is running and reverted to clean state on startup
     if vm_manager.snapshot_exists():
         logger.info("Ensuring VM is in clean state on startup...")
         try:
@@ -158,13 +191,18 @@ async def lifespan(app: FastAPI):
             logger.error(f"Failed to start VM on startup: {e}", exc_info=True)
             raise
     else:
-        logger.warning(
-            f"Snapshot '{vm_manager.snapshot_name}' does not exist - "
-            "skipping automatic VM restart. Please create snapshot via API."
-        )
+        logger.warning(f"Snapshot '{config.snapshot_name}' not found — skipping startup revert")
 
-    # Start heartbeat monitoring loop
+    # Start heartbeat monitoring (delay enabling to give VM time to boot AutoIT scripts)
     await heartbeat_monitor.start_monitoring()
+
+    async def _delayed_heartbeat_enable():
+        logger.info(f"Waiting {config.vm_startup_heartbeat_delay}s before enabling heartbeat monitoring...")
+        await asyncio.sleep(config.vm_startup_heartbeat_delay)
+        heartbeat_monitor.enable()
+        logger.info("Heartbeat monitoring enabled after startup delay")
+
+    asyncio.create_task(_delayed_heartbeat_enable())
 
     logger.info("Exhibition VM Controller API started successfully")
 
@@ -172,6 +210,17 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down Exhibition VM Controller API...")
+
+    # Run plugin shutdown hooks
+    if plugin_registry:
+        for hook in plugin_registry.get_shutdown_hooks():
+            try:
+                if asyncio.iscoroutinefunction(hook):
+                    await hook(app)
+                else:
+                    hook(app)
+            except Exception as e:
+                logger.error(f"Error in shutdown hook: {e}", exc_info=True)
 
     if heartbeat_monitor:
         await heartbeat_monitor.stop_monitoring()
@@ -183,7 +232,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Exhibition VM Controller API",
     description="REST API for controlling VMs in exhibition environments",
-    version="1.3.1",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -191,24 +240,9 @@ app = FastAPI(
 static_path = Path(__file__).parent.parent / "static"
 if static_path.exists():
     app.mount("/ui", StaticFiles(directory=str(static_path), html=True), name="static")
-    logger.info(f"Web UI available at /ui/")
 
 
 # API Endpoints
-@app.get("/", response_model=MessageResponse)
-async def root():
-    """Root endpoint with API information."""
-    return MessageResponse(
-        message="Exhibition VM Controller API",
-        details={
-            "version": "1.3.1",
-            "documentation": "/docs",
-            "status": "/api/v1/status",
-            "web_ui": "/ui/",
-        },
-    )
-
-
 @app.get("/api/v1/status", response_model=StatusResponse)
 async def get_status():
     """Get current VM and monitoring status."""
@@ -322,7 +356,7 @@ async def stop_vm():
 
 @app.get("/api/v1/vm/restart", response_model=MessageResponse)
 @app.post("/api/v1/vm/restart", response_model=MessageResponse)
-async def restart_vm():
+async def restart_vm(request: Request):
     """Restart VM by reverting to snapshot. Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
@@ -330,14 +364,36 @@ async def restart_vm():
             detail="VM manager not initialized",
         )
 
+    # Only apply pre-restart hooks for requests from inside the VM network.
+    # Admin/system requests from outside are always allowed.
+    client_ip = request.client.host if request.client else ""
+    from_vm = vm_manager.is_from_vm(client_ip)
+    if from_vm and plugin_registry:
+        reason = plugin_registry.check_pre_restart()
+        if reason:
+            logger.info(f"Restart blocked for VM client {client_ip}: {reason}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=reason,
+            )
+
     try:
-        # Clear manual stop flag to re-enable auto-restart
         if heartbeat_monitor:
             heartbeat_monitor.clear_manual_stop()
+            heartbeat_monitor.disable()
 
         loop = asyncio.get_event_loop()
         wait_for_ready = config.check_qemu_agent
-        await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
+        success = await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
+
+        # Run post-restart hooks
+        if plugin_registry:
+            plugin_registry.run_post_restart()
+
+        if success and heartbeat_monitor:
+            # Wait before re-enabling heartbeat
+            await asyncio.sleep(config.vm_startup_heartbeat_delay)
+            heartbeat_monitor.enable()
 
         return MessageResponse(
             message=f"VM '{vm_manager.vm_name}' restarted successfully",
@@ -483,10 +539,94 @@ async def get_heartbeat_status():
     return heartbeat_monitor.get_status()
 
 
+# ==============================================================================
+# Plugin System Endpoints
+# ==============================================================================
+
+
+@app.get("/api/v1/state")
+async def get_plugin_state():
+    """Aggregated state from all plugins."""
+    if not plugin_registry:
+        return JSONResponse({})
+    return JSONResponse(plugin_registry.get_state())
+
+
+@app.get("/api/v1/events")
+async def sse_events(request: Request):
+    """Server-Sent Events stream. Plugins push events into this."""
+    if not plugin_registry:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Plugin system not initialized",
+        )
+
+    queue = plugin_registry.sse_connect()
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event, data = await asyncio.wait_for(queue.get(), timeout=30)
+                    yield f"event: {event}\ndata: {data}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            plugin_registry.sse_disconnect(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/v1/poll/{resource}")
+async def poll_resource(resource: str):
+    """Poll current state of a resource. Returns plain text for AutoIt compatibility."""
+    if not plugin_registry:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Plugin system not initialized")
+    return PlainTextResponse(content=plugin_registry.get_poll_value(resource))
+
+
+@app.get("/api/v1/signal/{event}")
+async def signal_event(event: str, value: str = ""):
+    """Receive signal from guest (fire-and-forget). Dispatches to plugin handlers."""
+    if not plugin_registry:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Plugin system not initialized")
+    plugin_registry.handle_signal(event, value)
+    return PlainTextResponse(content="ok")
+
+
+@app.get("/api/v1/poll/{resource}/set")
+@app.post("/api/v1/poll/{resource}/set")
+async def set_poll_value(resource: str, value: str):
+    """Set poll value for external systems (e.g., Arduino controllers)."""
+    if not plugin_registry:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Plugin system not initialized")
+    plugin_registry.set_poll_value(resource, value)
+    return MessageResponse(message=f"Poll value '{resource}' set to '{value}'")
+
+
 def main():
     """Main entry point for running the API server."""
-    # Load config for uvicorn settings
-    config_path = Path("config.yaml")
+    global config_path
+
+    parser = argparse.ArgumentParser(description="Exhibition VM Controller API")
+    parser.add_argument(
+        "--config", "-c",
+        type=Path,
+        default=Path("config.yaml"),
+        help="Path to config YAML file (default: config.yaml)",
+    )
+    args = parser.parse_args()
+
+    # Set env var so uvicorn's module re-import picks up the right config
+    os.environ["VMCTL_CONFIG"] = str(args.config)
+    config_path = args.config
+
     if config_path.exists():
         cfg = Config.from_yaml(config_path)
     else:

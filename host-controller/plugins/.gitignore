@@ -1,0 +1,7 @@
+# Ignore all plugin files (custom per installation)
+*.py
+
+# Except example files
+!__init__.py
+!*.example.py
+!README.md
