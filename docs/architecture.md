@@ -265,7 +265,7 @@ For a 20-artwork exhibition, this means 20 physical hosts but shared VM template
 - Network: Bridged or NAT
 
 **Network Services**:
-- Proxy: nginx or Python http.server
+- Proxy (optional): nginx, Caddy, or Python http.server
 - Mock APIs: Flask/FastAPI
 - Archives: wget mirrors, Webrecorder captures
 

@@ -131,10 +131,8 @@ exhibition-vm-controller/
     ├── systemd/                       # Systemd service templates
     │   ├── exhibition-vm-controller.service
     │   └── README.md
-    ├── openbox/                       # Openbox configuration
-    │   ├── autostart                  # Autostart virt-viewer
-    │   └── README.md
-    └── nginx/                         # Nginx reverse proxy examples
+    └── openbox/                       # Openbox configuration
+        ├── autostart                  # Autostart virt-viewer
         └── README.md
 ```
 

@@ -124,7 +124,7 @@ Click **Forward**.
 
 ### 2.6 Name the VM
 
-- **Name**: Something descriptive (e.g., `eden-garden-vm`)
+- **Name**: Something descriptive (e.g., `my-artwork-vm`)
 - **Network selection**: NAT or Bridge (NAT recommended)
 - Check **Customize configuration before install**
 - Click **Finish**
@@ -226,7 +226,7 @@ cp examples/config.example.yaml config.yaml
 Edit `config.yaml`:
 
 ```yaml
-vm_name: "eden-garden-vm"  # Must match VM name in virt-manager
+vm_name: "my-artwork-vm"  # Must match VM name in virt-manager
 snapshot_name: "ready"
 heartbeat_timeout: 10
 idle_timeout: 720  # 12 minutes in seconds

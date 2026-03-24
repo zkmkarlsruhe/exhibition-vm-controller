@@ -55,7 +55,7 @@ Get comprehensive system status including VM state, snapshot availability, and h
 **Response**:
 ```json
 {
-  "vm_name": "eden-garden-vm",
+  "vm_name": "my-artwork-vm",
   "vm_state": "running",
   "vm_is_running": true,
   "snapshot_name": "ready",
@@ -170,7 +170,7 @@ Start the VM by reverting to the configured snapshot.
 **Response**:
 ```json
 {
-  "message": "VM 'eden-garden-vm' started successfully",
+  "message": "VM 'my-artwork-vm' started successfully",
   "details": null
 }
 ```
@@ -195,7 +195,7 @@ Stop (destroy) the VM.
 **Response**:
 ```json
 {
-  "message": "VM 'eden-garden-vm' stopped successfully",
+  "message": "VM 'my-artwork-vm' stopped successfully",
   "details": null
 }
 ```
@@ -222,7 +222,7 @@ Restart the VM by reverting to snapshot (recommended recovery method).
 **Response**:
 ```json
 {
-  "message": "VM 'eden-garden-vm' restarted successfully",
+  "message": "VM 'my-artwork-vm' restarted successfully",
   "details": null
 }
 ```
@@ -251,7 +251,7 @@ List all snapshots for the configured VM.
 **Response**:
 ```json
 {
-  "vm_name": "eden-garden-vm",
+  "vm_name": "my-artwork-vm",
   "snapshots": [
     "ready",
     "backup-2025-12-01",
@@ -290,7 +290,7 @@ curl -X POST "http://localhost:8000/api/v1/snapshot/create?snapshot_name=backup-
 **Response**:
 ```json
 {
-  "message": "Snapshot 'ready' created successfully for VM 'eden-garden-vm'",
+  "message": "Snapshot 'ready' created successfully for VM 'my-artwork-vm'",
   "details": null
 }
 ```
