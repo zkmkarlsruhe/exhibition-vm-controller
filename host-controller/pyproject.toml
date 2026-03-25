@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "exhibition-vm-controller"
-version = "2.0.0"
+version = "2.1.0"
 description = "Framework for conservation and autonomous exhibition operation of historical digital artworks using VMs with snapshot-based error recovery"
 authors = ["Marc Schütze <mschuetze@zkm.de>"]
 license = "MIT"

@@ -16,7 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker containerization for host controller
 - VMware and VirtualBox backend support
 - Metrics collection and visualization (Prometheus/Grafana integration)
-- Modular plugin system for custom polling and signaling handlers
+
+## [2.1.0] - 2026-03-25
+
+### Added
+- **Modular plugin system** with signals, polls, state providers, SSE events, lifecycle hooks, and web serving
+- **SSE event streaming** at `/api/v1/events` — heartbeats and signals forwarded to connected clients in real time
+- **Plugin web handler** — plugins serve artwork content via a catch-all route, replacing the router-based approach
+- **Deployment examples** — systemd template service for multi-instance operation and libvirt QEMU hook for iptables DNAT forwarding (replaces nginx reverse proxy)
+- **Network auto-discovery** — VM IP resolved from libvirt, no manual configuration needed
+- **Restart gating** — pre-restart hooks allow plugins to block restarts based on artwork state
+
+### Changed
+- **Simplified heartbeat monitor** — replaced set_manual_stop/clear_manual_stop with enable/disable/reset
+- **Plugin web serving refactored** — single web handler function replaces FastAPI router registration
+- **Signal handling** — all handled signals now pushed to SSE clients automatically
+- **Examples made artwork-agnostic** — documentation uses generic VM names instead of specific artworks
+- **Removed nginx dependency** — server binds directly to VM-facing interface
 
 ## [1.3.1] - 2026-02-15
 
@@ -289,7 +305,7 @@ If you use this software in academic work, please cite:
   author = {Schütze, Marc},
   title = {Exhibition VM Controller: Snapshot-Based Conservation of Digital Artworks},
   year = {2025},
-  version = {1.3.1},
+  version = {2.1.0},
   organization = {ZKM | Center for Art and Media Karlsruhe},
   url = {https://github.com/zkmkarlsruhe/exhibition-vm-controller}
 }
@@ -299,4 +315,4 @@ See [CITATION.cff](CITATION.cff) for machine-readable citation metadata.
 
 ---
 
-*Last updated: 2026-02-15*
+*Last updated: 2026-03-25*

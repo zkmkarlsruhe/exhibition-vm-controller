@@ -230,7 +230,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Exhibition VM Controller API",
     description="REST API for controlling VMs in exhibition environments",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
