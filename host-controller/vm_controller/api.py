@@ -166,9 +166,7 @@ async def lifespan(app: FastAPI):
     )
     plugin_registry.load_plugins(config.plugins)
 
-    # Include plugin routers
-    for router in plugin_registry.get_routers():
-        app.include_router(router)
+    # Note: plugin web content is served via catch-all route at the bottom of api.py
 
     # Run plugin startup hooks
     for hook in plugin_registry.get_startup_hooks():
@@ -288,6 +286,9 @@ async def receive_heartbeat():
         )
 
     heartbeat_monitor.receive_heartbeat()
+
+    if plugin_registry:
+        plugin_registry.push_event("heartbeat", "{}")
 
     return MessageResponse(
         message="Heartbeat received",
@@ -608,6 +609,21 @@ async def set_poll_value(resource: str, value: str):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Plugin system not initialized")
     plugin_registry.set_poll_value(resource, value)
     return MessageResponse(message=f"Poll value '{resource}' set to '{value}'")
+
+
+# ==============================================================================
+# Plugin Web Content (catch-all — must be last)
+# ==============================================================================
+
+
+@app.get("/{path:path}")
+async def serve_plugin_content(path: str):
+    """Serve plugin web content. Falls through to 404 if no plugin handles it."""
+    if plugin_registry:
+        response = plugin_registry.serve_web(path)
+        if response is not None:
+            return response
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 def main():

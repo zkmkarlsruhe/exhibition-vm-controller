@@ -13,6 +13,7 @@ they don't create separate API namespaces.
 
 import asyncio
 import importlib.util
+import json
 import logging
 import subprocess
 from pathlib import Path
@@ -45,6 +46,9 @@ class PluginRegistry:
         # SSE event queues for connected clients
         self._sse_clients: List[asyncio.Queue] = []
 
+        # Web handler for serving plugin content
+        self._web_handler: Optional[Callable] = None
+
         # Simple key-value state storage (for plugins without Python handlers)
         self._poll_state: Dict[str, str] = {}
 
@@ -65,10 +69,10 @@ class PluginRegistry:
         self._state_providers[name] = provider
         logger.info(f"Registered state provider '{name}'")
 
-    def register_router(self, router: APIRouter) -> None:
-        """Register a router for web-serving (artwork content, not API routes)."""
-        self._routers.append(router)
-        logger.info("Registered plugin router")
+    def register_web_handler(self, handler: Callable) -> None:
+        """Register a web handler: (path: str) → Response or None."""
+        self._web_handler = handler
+        logger.info("Registered web handler")
 
     def register_startup_hook(self, hook: Callable) -> None:
         self._startup_hooks.append(hook)
@@ -113,27 +117,37 @@ class PluginRegistry:
         return "none"
 
     def handle_signal(self, event: str, value: str) -> None:
+        label = f"Signal '{event}'" + (f" = '{value}'" if value else "")
+        handled = False
+
         if event in self._signal_handlers:
             try:
                 self._signal_handlers[event](value)
-                logger.info(f"Signal '{event}' = '{value}'")
-                return
+                logger.info(label)
+                handled = True
             except Exception as e:
                 logger.error(f"Error in signal handler '{event}': {e}", exc_info=True)
+        else:
+            # Shell script fallback
+            hook_path = self.hooks_dir / "signals" / f"{event}.sh"
+            if hook_path.exists() and hook_path.is_file():
+                try:
+                    subprocess.run(
+                        [str(hook_path), value], capture_output=True, text=True, timeout=5, check=True,
+                    )
+                    logger.info(f"{label} (shell hook)")
+                    handled = True
+                except Exception as e:
+                    logger.error(f"Signal hook '{event}' failed: {e}")
 
-        # Shell script fallback
-        hook_path = self.hooks_dir / "signals" / f"{event}.sh"
-        if hook_path.exists() and hook_path.is_file():
-            try:
-                subprocess.run(
-                    [str(hook_path), value], capture_output=True, text=True, timeout=5, check=True,
-                )
-                logger.info(f"Signal '{event}' = '{value}' (shell hook)")
-                return
-            except Exception as e:
-                logger.error(f"Signal hook '{event}' failed: {e}")
+        if not handled:
+            logger.info(f"{label} (no handler)")
+            return
 
-        logger.info(f"Signal '{event}' = '{value}' (no handler)")
+        # Push all signals to SSE clients
+        if self._sse_clients:
+            data = json.dumps({"event": event, "value": value} if value else {"event": event})
+            self.push_event("signal", data)
 
     def get_state(self) -> dict:
         """Aggregate state from all providers."""
@@ -192,8 +206,14 @@ class PluginRegistry:
 
     # --- Accessors ---
 
-    def get_routers(self) -> List[APIRouter]:
-        return self._routers
+    def serve_web(self, path: str):
+        """Try to serve a web path via plugin handler. Returns Response or None."""
+        if self._web_handler:
+            try:
+                return self._web_handler(path)
+            except Exception as e:
+                logger.error(f"Error in web handler for '{path}': {e}")
+        return None
 
     def get_startup_hooks(self) -> List[Callable]:
         return self._startup_hooks
