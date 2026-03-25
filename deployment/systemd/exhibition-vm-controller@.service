@@ -1,0 +1,43 @@
+# Exhibition VM Controller - Systemd Template Service
+# Author: Marc Schütze, ZKM | Center for Art and Media Karlsruhe
+# License: MIT
+#
+# Template service for running multiple artwork instances.
+# %i is the artwork config name (e.g., my_artwork).
+#
+# Installation:
+#   1. Edit paths, User, and Group below
+#   2. Copy to /etc/systemd/system/exhibition-vm-controller@.service
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable exhibition-vm-controller@my_artwork
+#   5. sudo systemctl start exhibition-vm-controller@my_artwork
+#
+# Logs:
+#   journalctl -u exhibition-vm-controller@my_artwork -f
+
+[Unit]
+Description=Exhibition VM Controller - %i
+Documentation=https://github.com/zkmkarlsruhe/exhibition-vm-controller
+After=network.target libvirtd.service
+Wants=libvirtd.service
+
+[Service]
+Type=simple
+
+# CHANGE THESE to match your setup
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/path/to/exhibition-vm-controller/host-controller
+
+# Config file per artwork instance
+ExecStart=/path/to/exhibition-vm-controller/host-controller/.venv/bin/python -m vm_controller.api --config /path/to/exhibition-vm-controller/deployment/configs/%i.yaml
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vmctl-%i
+
+[Install]
+WantedBy=multi-user.target

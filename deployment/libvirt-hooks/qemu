@@ -1,0 +1,93 @@
+#!/bin/bash
+# Libvirt QEMU hook for exhibition VM port forwarding.
+#
+# Replaces nginx reverse proxy with direct iptables DNAT.
+# Each VM talks to 192.168.122.1:80 (the bridge IP). This hook redirects
+# that traffic to the FastAPI port on the same bridge IP, so no loopback
+# routing is needed.
+#
+# VM (192.168.122.x) → 192.168.122.1:80 → DNAT → 192.168.122.1:<port>
+#
+# FastAPI must bind to 192.168.122.1 (or 0.0.0.0), not 127.0.0.1.
+#
+# Hook arguments: /etc/libvirt/hooks/qemu <guest> <operation> <sub-operation>
+#
+# Install:
+#   sudo install -m 755 deployment/libvirt-hooks/qemu /etc/libvirt/hooks/qemu
+#   sudo systemctl restart libvirtd
+#
+# Events we handle:
+#   started    — VM just started, add rules
+#   reconnect  — libvirtd restarted while VM was running, re-add rules
+#   stopped    — VM stopped (graceful or crash), remove rules
+
+GUEST_NAME="$1"
+OPERATION="$2"
+
+BRIDGE_IP="192.168.122.1"
+
+# VM name → (guest_ip, host_port) mapping
+# Add your VMs here. The guest IP is the VM's static IP on the libvirt bridge.
+# The host port is the FastAPI port the controller listens on.
+declare -A VM_IP VM_PORT
+VM_IP["My-Artwork-VM"]="192.168.122.10"
+VM_PORT["My-Artwork-VM"]="8001"
+# VM_IP["Another-VM"]="192.168.122.11"
+# VM_PORT["Another-VM"]="8002"
+
+# Only handle VMs we know about
+GUEST_IP="${VM_IP[$GUEST_NAME]}"
+HOST_PORT="${VM_PORT[$GUEST_NAME]}"
+if [ -z "$GUEST_IP" ]; then
+    exit 0
+fi
+
+# Comment tag for identifying our rules (allows clean removal)
+COMMENT="exhibition-vmctl-${GUEST_NAME}"
+
+remove_rules() {
+    # Remove all iptables rules tagged with our comment for this VM.
+    # Loop until no more matching rules exist (handles duplicates/crashes).
+    local table chain table_chain
+    for table_chain in "nat:PREROUTING" "filter:FORWARD"; do
+        table="${table_chain%%:*}"
+        chain="${table_chain##*:}"
+        while iptables -t "$table" -L "$chain" -n --line-numbers 2>/dev/null \
+              | grep -q "$COMMENT"; do
+            line=$(iptables -t "$table" -L "$chain" -n --line-numbers 2>/dev/null \
+                   | grep "$COMMENT" | head -1 | awk '{print $1}')
+            [ -z "$line" ] && break
+            iptables -t "$table" -D "$chain" "$line" 2>/dev/null
+        done
+    done
+}
+
+add_rules() {
+    # DNAT: packets from this VM to the bridge IP port 80
+    # get rewritten to the FastAPI port on the same bridge IP.
+    iptables -t nat -I PREROUTING \
+        -i virbr0 -s "$GUEST_IP" -d "$BRIDGE_IP" \
+        -p tcp --dport 80 \
+        -j DNAT --to-destination "${BRIDGE_IP}:${HOST_PORT}" \
+        -m comment --comment "$COMMENT"
+
+    # FORWARD: allow the DNATed packets through
+    iptables -I FORWARD \
+        -i virbr0 -s "$GUEST_IP" -d "$BRIDGE_IP" \
+        -p tcp --dport "$HOST_PORT" \
+        -j ACCEPT \
+        -m comment --comment "$COMMENT"
+}
+
+case "$OPERATION" in
+    started|reconnect)
+        # Always clean first to be idempotent, then add
+        remove_rules
+        add_rules
+        ;;
+    stopped|release)
+        remove_rules
+        ;;
+esac
+
+exit 0
