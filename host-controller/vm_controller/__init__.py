@@ -15,8 +15,8 @@ __author__ = "Marc Schütze"
 __email__ = "mschuetze@zkm.de"
 __organization__ = "ZKM | Center for Art and Media Karlsruhe"
 
-from vm_controller.vm_manager import VMManager
-from vm_controller.heartbeat_monitor import HeartbeatMonitor
 from vm_controller.config import Config
+from vm_controller.heartbeat_monitor import HeartbeatMonitor
+from vm_controller.vm_manager import VMManager
 
 __all__ = ["VMManager", "HeartbeatMonitor", "Config"]

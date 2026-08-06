@@ -1,0 +1,9 @@
+# build/runtime artifacts — not source
+proxy/.venv/
+proxy/archive/*
+proxy/ca/*
+!proxy/archive/.gitkeep
+!proxy/ca/.gitkeep
+__pycache__/
+*.pyc
+*.pcap

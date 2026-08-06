@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Drop-in `virsh` for the conservation container.
+
+Installed as /usr/local/bin/virsh inside the image. Instead of running libvirt
+(not present in the container), it forwards argv to the host `virsh-broker` over
+a unix socket and reproduces virsh's behaviour: stdout, stderr, exit code. So
+host_mcp.py / guest_exec.py / capture_traffic.py call `virsh` exactly as before.
+
+Socket path from $CONS_VIRSH_SOCK (default /run/cons-virsh.sock, bind-mounted).
+"""
+import base64
+import json
+import os
+import socket
+import sys
+
+SOCK = os.environ.get("CONS_VIRSH_SOCK", "/run/cons-virsh.sock")
+
+
+def main():
+    argv = sys.argv[1:]
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(SOCK)
+    except OSError as e:
+        sys.stderr.write("virsh-shim: cannot reach broker at %s: %s\n" % (SOCK, e))
+        sys.exit(125)
+    f = s.makefile("rwb")
+    f.write((json.dumps({"argv": argv}) + "\n").encode())
+    f.flush()
+    resp = json.loads(f.readline())
+    s.close()
+
+    # screenshot: broker returns the image inline; write it to the requested path.
+    if resp.get("file_b64") and argv and argv[0] == "screenshot" and len(argv) >= 3:
+        with open(argv[-1], "wb") as out:
+            out.write(base64.b64decode(resp["file_b64"]))
+
+    if resp.get("stdout"):
+        sys.stdout.write(resp["stdout"])
+    if resp.get("stderr"):
+        sys.stderr.write(resp["stderr"])
+    sys.exit(resp.get("rc", 1))
+
+
+if __name__ == "__main__":
+    main()

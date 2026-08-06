@@ -187,6 +187,35 @@ See `docs/api-reference.md` for complete API documentation.
 - **Autostart**: Automatic launch on boot for unattended operation
 - **Openbox Integration**: Lightweight, reliable window management
 
+## Conservation Toolkit
+
+Beyond keeping a VM running, conserving a *networked* artwork means dealing with
+the servers it talks to — which are often **gone**. The optional conservation
+toolkit (`host-controller/conservation/`) helps you understand and revive that
+network side. It runs **entirely in Docker** so the host stays clean; the only
+host footprint is a tiny `virsh-broker` (see its README for the architecture).
+
+- **See what an artwork reaches for** — tap-level traffic capture + a browser
+  inspector list every host/port the guest touches.
+- **Revive dead servers** — a mitmproxy archive layer serves a dead server's
+  responses from a local archive (recording live ones while they last), with a
+  no-privilege **nginx → archive** front door for hostname-based redirects.
+- **Intercept HTTPS** — silently install a proxy CA into the guest's trust
+  stores (Windows root, Java `cacerts`, Firefox/NSS).
+- **Debug & drive a black-box guest** — a single drop-in **in-guest agent**
+  (one Windows `.exe`, XP → Win10) exposes processes, windows, input injection,
+  screenshots, files, registry and network probes over **MCP**, so an AI agent
+  can investigate and operate the artwork. A **host MCP shim** unifies these with
+  hypervisor tools (screenshot, send-key, snapshots) into one endpoint.
+- **Prep for unattended presentation** — a kiosk-hygiene panel of toggleable,
+  reversible tweaks (disable screensaver/updates/popups, harden against
+  visitor breakout, point hardcoded hostnames at the proxy).
+
+See [`host-controller/conservation/README.md`](host-controller/conservation/README.md)
+for the full toolkit, and
+[`conservation/guest_agent/README.md`](host-controller/conservation/guest_agent/README.md)
+for the in-guest agent.
+
 ## Quick Start
 
 ### Prerequisites

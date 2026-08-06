@@ -20,13 +20,16 @@ classifiers = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"  # vmctl-core (bundle format + import) requires >=3.11
 fastapi = "^0.109.0"
 uvicorn = {extras = ["standard"], version = "^0.27.0"}
 pyyaml = "^6.0.1"
 pydantic = "^2.5.0"
 pydantic-settings = "^2.1.0"
 pyserial = {version = "^3.5", optional = true}
+# the exhibition handoff — shared promotion bundle format (verify/pack/unpack),
+# the same seam rvmc writes with, so catalog + importer can't drift from it.
+vmctl-core = { path = "../../vmctl-core", develop = true }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
@@ -38,6 +41,8 @@ mypy = "^1.8.0"
 [tool.poetry.scripts]
 exhibition-vm-controller = "vm_controller.api:main"
 vm-controller = "vm_controller.api:main"
+evmctl-catalog = "vm_controller.catalog:main"
+evmctl-import = "vm_controller.importer:main"
 vmctl = "vm_controller.api:main"
 
 [build-system]

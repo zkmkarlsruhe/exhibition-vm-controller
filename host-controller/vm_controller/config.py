@@ -14,9 +14,9 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
+import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -41,18 +41,13 @@ class Config(BaseSettings):
     )
 
     # VM Configuration
-    vm_name: str = Field(
-        description="Name of the VM in libvirt"
-    )
+    vm_name: str = Field(description="Name of the VM in libvirt")
 
-    snapshot_name: str = Field(
-        default="ready",
-        description="Name of the snapshot to revert to"
-    )
+    snapshot_name: str = Field(default="ready", description="Name of the snapshot to revert to")
 
     # Heartbeat Configuration
     heartbeat_timeout: float = Field(
-        default=15.0,
+        default=10.0,
         description="Seconds without heartbeat before considering VM failed",
         gt=0,
     )
@@ -60,6 +55,16 @@ class Config(BaseSettings):
     heartbeat_check_interval: float = Field(
         default=0.5,
         description="Seconds between heartbeat timeout checks",
+        gt=0,
+    )
+
+    heartbeat_recovery_backoff: float = Field(
+        default=30.0,
+        description=(
+            "Minimum seconds between recovery attempts. Edge-triggers recovery so a VM that "
+            "stays down (or auto-revert being disabled) can't re-fire recovery every check "
+            "interval and flood the journal/disk."
+        ),
         gt=0,
     )
 
@@ -84,15 +89,32 @@ class Config(BaseSettings):
 
     # Auto-Revert Configuration
     auto_revert_enabled: bool = Field(
-        default=True,
-        description="Enable automatic revert on heartbeat timeout"
+        default=True, description="Enable automatic revert on heartbeat timeout"
+    )
+
+    guest_guard_fail_open: bool = Field(
+        default=False,
+        description=(
+            "If the VM subnet can't be discovered, whether the guest-origin guard on destructive "
+            "endpoints (snapshot delete/revert, stop) should FAIL OPEN (allow) instead of the safe "
+            "default of FAIL CLOSED (deny). Leave False in production: fail-open lets stray art "
+            "content reach those endpoints when discovery is broken. Only enable on odd topologies "
+            "where the guest genuinely can't reach the API and operator lockout would be worse."
+        ),
+    )
+
+    trusted_proxies: List[str] = Field(
+        default=["127.0.0.1", "::1"],
+        description=(
+            "IPs of reverse proxies allowed to set the real client address via X-Real-IP / "
+            "X-Forwarded-For. When a request's direct peer is in this list, the guest-origin "
+            "guard uses the forwarded IP instead of the proxy's. The bundled nginx proxies from "
+            "127.0.0.1, so that is trusted by default; set to [] for a pure direct-bind setup."
+        ),
     )
 
     # API Configuration
-    api_host: str = Field(
-        default="0.0.0.0",
-        description="Host to bind API server to"
-    )
+    api_host: str = Field(default="0.0.0.0", description="Host to bind API server to")
 
     api_port: int = Field(
         default=8000,
@@ -101,32 +123,29 @@ class Config(BaseSettings):
         lt=65536,
     )
 
-    api_reload: bool = Field(
-        default=False,
-        description="Enable auto-reload for development"
-    )
+    api_reload: bool = Field(default=False, description="Enable auto-reload for development")
 
     # Logging Configuration
     log_level: str = Field(
-        default="INFO",
-        description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
+        default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
     )
 
     log_format: str = Field(
         default="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        description="Log message format"
+        description="Log message format",
     )
 
     # Plugin Configuration
     plugins: Optional[List[str]] = Field(
         default=None,
-        description="List of plugin names to load (without .py). If not set, all plugins are loaded."
+        description=(
+            "List of plugin names to load (without .py). If not set, all plugins are loaded."
+        ),
     )
 
     # QEMU Guest Agent Configuration
     check_qemu_agent: bool = Field(
-        default=True,
-        description="Verify VM responsiveness using QEMU guest agent"
+        default=True, description="Verify VM responsiveness using QEMU guest agent"
     )
 
     qemu_agent_timeout: float = Field(
@@ -160,6 +179,15 @@ class Config(BaseSettings):
 
         if config_data is None:
             config_data = {}
+
+        # A top-level list/scalar (e.g. a YAML document that is a bare list) would make
+        # ``cls(**config_data)`` raise a raw TypeError and crashloop the process under
+        # Restart=always. Fail with a clear, actionable message instead.
+        if not isinstance(config_data, dict):
+            raise ValueError(
+                f"Config file {config_path} must contain a top-level mapping (key: value pairs), "
+                f"got {type(config_data).__name__}"
+            )
 
         return cls(**config_data)
 

@@ -23,6 +23,11 @@ from fastapi import APIRouter
 
 logger = logging.getLogger(__name__)
 
+# Cap per-client SSE backlog. A stuck/slow client (browser tab that stopped reading) must not grow
+# its queue without bound over a long show. When full we drop the OLDEST event to make room for the
+# newest, so a laggard sees a gap rather than exhausting host memory.
+_SSE_QUEUE_MAXSIZE = 1000
+
 
 class PluginRegistry:
     """Central registry for plugin capabilities."""
@@ -52,7 +57,9 @@ class PluginRegistry:
         # Simple key-value state storage (for plugins without Python handlers)
         self._poll_state: Dict[str, str] = {}
 
-        logger.info(f"Plugin registry initialized (plugins: {self.plugins_dir}, hooks: {self.hooks_dir})")
+        logger.info(
+            f"Plugin registry initialized (plugins: {self.plugins_dir}, hooks: {self.hooks_dir})"
+        )
 
     # --- Registration ---
 
@@ -108,7 +115,11 @@ class PluginRegistry:
         if hook_path.exists() and hook_path.is_file():
             try:
                 result = subprocess.run(
-                    [str(hook_path)], capture_output=True, text=True, timeout=5, check=True,
+                    [str(hook_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=True,
                 )
                 return result.stdout.strip()
             except Exception as e:
@@ -133,7 +144,11 @@ class PluginRegistry:
             if hook_path.exists() and hook_path.is_file():
                 try:
                     subprocess.run(
-                        [str(hook_path), value], capture_output=True, text=True, timeout=5, check=True,
+                        [str(hook_path), value],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        check=True,
                     )
                     logger.info(f"{label} (shell hook)")
                     handled = True
@@ -185,7 +200,7 @@ class PluginRegistry:
     # --- SSE ---
 
     def sse_connect(self) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
         self._sse_clients.append(queue)
         logger.info(f"SSE client connected ({len(self._sse_clients)} total)")
         return queue
@@ -196,9 +211,25 @@ class PluginRegistry:
         logger.info(f"SSE client disconnected ({len(self._sse_clients)} remaining)")
 
     def push_event(self, event: str, data: str) -> None:
-        """Push an event to all connected SSE clients."""
+        """Push an event to all connected SSE clients.
+
+        Queues are bounded (``_SSE_QUEUE_MAXSIZE``). For a laggard whose queue is full we drop the
+        oldest event to make room for the newest so its backlog stays bounded; if even that fails
+        the client is disconnected.
+        """
+        dead: List[asyncio.Queue] = []
         for queue in self._sse_clients:
-            queue.put_nowait((event, data))
+            try:
+                queue.put_nowait((event, data))
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()  # drop oldest, keep the stream flowing to the latest state
+                    queue.put_nowait((event, data))
+                except Exception:
+                    dead.append(queue)
+        for queue in dead:
+            logger.warning("Dropping unresponsive SSE client (queue full)")
+            self.sse_disconnect(queue)
 
     @property
     def sse_client_count(self) -> int:
@@ -239,7 +270,8 @@ class PluginRegistry:
 
             try:
                 spec = importlib.util.spec_from_file_location(
-                    f"plugins.{plugin_file.stem}", plugin_file,
+                    f"plugins.{plugin_file.stem}",
+                    plugin_file,
                 )
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)

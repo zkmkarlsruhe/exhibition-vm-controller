@@ -1,0 +1,4 @@
+# Build artifacts — rebuild with ./build.sh
+legacy-agent.exe
+legacy-agent-*
+go.sum

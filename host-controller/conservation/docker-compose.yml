@@ -1,0 +1,65 @@
+# Conservation toolkit — Option A (host network + host virsh-broker).
+#
+# Host prep (once): start the broker, which is the ONLY thing on the host:
+#   python3 host/virsh-broker.py            # listens on /tmp/cons-sock/virsh.sock
+#
+# Then:
+#   docker compose build
+#   docker compose up proxy                 # mitmproxy archive server on :8080
+#   docker compose run --rm tools mcp "CYF-Example"        # MCP over stdio
+#   docker compose run --rm tools capture "CYF-Subfusion" -s 120
+#   docker compose run --rm tools install-ca --vm "CYF-Example"
+
+x-common: &common
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: cons-toolkit
+  network_mode: host          # shares only the net namespace; no software on host
+  cap_add: [NET_RAW, NET_ADMIN]
+  user: "${CONS_UID:-1000}:${CONS_GID:-1000}"   # write archive/CA as the host user (no root-owned files)
+  volumes:
+    - /tmp/cons-sock:/run/cons            # the virsh-broker socket dir
+    - ./proxy/archive:/archive            # served/recorded content
+    - ./proxy/ca:/cadir                   # mitmproxy CA (persisted)
+  # NOTE: `capture` needs tcpdump's privileges — run it as root:
+  #   docker compose run --rm --user 0 tools capture "CYF-Subfusion" -s 120
+
+services:
+  proxy:
+    <<: *common
+    environment:
+      CONS_PORT: "8080"
+      CONS_MODE: regular        # set 'transparent' for transparent interception
+      CONS_LOG: /archive/_flows.jsonl
+    command: ["proxy"]
+    restart: unless-stopped
+
+  # one-shot tools (mcp / capture / webui / install-ca / shell)
+  tools:
+    <<: *common
+    profiles: ["tools"]
+    command: ["shell"]
+
+  # --- Front door (the 'put nginx in Docker' path). Bridge network so the daemon
+  # --- can publish :80; scoped to the VM-network IP only; both non-root. ---
+  archive:
+    image: cons-toolkit
+    networks: [cons]                       # bridge, reachable by nginx as 'archive'
+    user: "${CONS_UID:-1000}:${CONS_GID:-1000}"
+    volumes: ["./proxy/archive:/archive"]
+    command: ["archive", "--listen", "0.0.0.0", "--port", "8081"]
+    restart: unless-stopped
+
+  nginx:
+    image: nginxinc/nginx-unprivileged:stable   # runs as non-root, listens :8080
+    networks: [cons]
+    ports: ["${CONS_FRONT_IP:-192.168.122.1}:80:8080"]   # daemon binds VM-net IP only
+    extra_hosts: ["host.docker.internal:host-gateway"]   # reach the host controller
+    volumes: ["./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro"]
+    depends_on: [archive]
+    restart: unless-stopped
+
+networks:
+  cons:
+    driver: bridge

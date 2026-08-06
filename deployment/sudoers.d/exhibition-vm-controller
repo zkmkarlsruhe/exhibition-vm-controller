@@ -1,0 +1,26 @@
+# Exhibition VM Controller — passwordless sudo for conntrack flush
+# Author: Marc Schütze, ZKM | Center for Art and Media Karlsruhe
+# License: MIT
+#
+# After a snapshot revert the VM resumes with TCP connections from before the
+# snapshot. The kernel conntrack table still holds the old entries, so packets
+# with mismatched sequence numbers get dropped and the guest cannot talk to the
+# host (heartbeat, proxy layer) until the stale entries age out. VMManager runs
+# `sudo conntrack -D -s <vm-subnet>` on every start/revert to clear them.
+#
+# Without this drop-in that sudo call fails (no tty → "a password is required"),
+# the flush is silently skipped, and the guest may be unreachable for ~minutes
+# after each recovery. Install it so the controller's service user can run only
+# that one command, with no password and no broader privilege.
+#
+# Installation (replace YOUR_USERNAME with the service User= from the unit file):
+#   sudo cp deployment/sudoers.d/exhibition-vm-controller /etc/sudoers.d/exhibition-vm-controller
+#   sudo sed -i 's/YOUR_USERNAME/<your-service-user>/' /etc/sudoers.d/exhibition-vm-controller
+#   sudo chmod 0440 /etc/sudoers.d/exhibition-vm-controller
+#   sudo visudo -cf /etc/sudoers.d/exhibition-vm-controller   # validate syntax
+
+YOUR_USERNAME ALL=(root) NOPASSWD: /usr/sbin/conntrack -D *
+
+# Conservation virsh-broker: transparent-interception iptables (nat REDIRECT only).
+# Lets the broker turn transparent mode on/off per VM without a root daemon.
+YOUR_USERNAME ALL=(root) NOPASSWD: /usr/sbin/iptables -t nat *

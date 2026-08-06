@@ -1,0 +1,51 @@
+# evmc-catalog — the "done" shelf (research/29 §8 handoff)
+# Author: Marc Schütze, ZKM | Center for Art and Media Karlsruhe
+# License: MIT
+#
+# Runs on the research host (vmctl.org, alongside rvmc), NOT on an exhibition
+# machine. It is rooted at the SAME shared drives/ filesystem rvmc promotes into
+# and serves each finished artwork as one self-contained baked zip — nothing is
+# pushed anywhere, the handoff is in-system (the autopsy<->rvmc pattern).
+#
+# Installation:
+#   1. Edit User/Group/WorkingDirectory + the VMCTL_CATALOG_* env below
+#   2. Copy to /etc/systemd/system/evmc-catalog.service
+#   3. sudo systemctl daemon-reload && sudo systemctl enable --now evmc-catalog
+#
+# Logs: journalctl -u evmc-catalog -f
+
+[Unit]
+Description=evmc-catalog — finished-artwork shelf + baked-zip download
+Documentation=https://github.com/zkmkarlsruhe/exhibition-vm-controller
+After=network.target
+
+[Service]
+Type=simple
+
+# CHANGE THESE to match your setup
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/path/to/exhibition-vm-controller/host-controller
+
+# Shared drives root rvmc writes bundles under (<drive>/exhibition/<id>/).
+Environment=VMCTL_CATALOG_DRIVES_ROOT=/srv/vmctl/drives
+# Golden-base catalog.yaml — needed to bake a thin bundle into a standalone image.
+Environment=VMCTL_CATALOG_CATALOG_PATH=/srv/vmctl/catalog/catalog.yaml
+Environment=VMCTL_CATALOG_API_PORT=8090
+
+ExecStart=/path/to/exhibition-vm-controller/host-controller/.venv/bin/python -m vm_controller.catalog
+
+Restart=always
+RestartSec=10
+
+# read-only over the drives; only needs to write the temp zip it streams
+ProtectSystem=strict
+ReadWritePaths=/tmp
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=evmc-catalog
+
+[Install]
+WantedBy=multi-user.target

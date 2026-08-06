@@ -1,0 +1,26 @@
+# Exhibition VM Controller - per-artwork deployment config (example template)
+# Copy this per exhibited work. The guest binds its static IP directly to the
+# API host:port (e.g. 192.168.122.<n> → 192.168.122.1:80).
+
+vm_name: "winxp-example"
+snapshot_name: "ready"
+
+heartbeat_timeout: 10.0
+heartbeat_check_interval: 0.5
+vm_startup_wait_interval: 10.0
+vm_startup_max_attempts: 30
+vm_startup_heartbeat_delay: 10.0
+auto_revert_enabled: true
+
+# Optional: conservation plugins to bind for this work (names resolved from the
+# external plugins home; see RVMC_PLUGINS_DIR).
+# plugins:
+#   - example-plugin
+
+api_host: "192.168.122.1"
+api_port: 80
+api_reload: false
+
+log_level: "INFO"
+check_qemu_agent: false
+qemu_agent_timeout: 5.0

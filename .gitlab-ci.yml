@@ -1,0 +1,16 @@
+# This repo has no build/test CI of its own; the only job tells the vmctl superproject
+# to bump its pointer to this repo's new main (so the superproject auto-tracks main).
+# A pipeline can't consist solely of a .post job, so this runs in a normal stage.
+# Needs SUPERPROJECT_TRIGGER_TOKEN (masked CI var).
+update-superproject:
+  image: curlimages/curl:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - >
+      curl --fail --silent --show-error --request POST
+      --form "token=${SUPERPROJECT_TRIGGER_TOKEN}"
+      --form "ref=main"
+      --form "variables[SUBMODULE]=exhibition-vm-controller"
+      --form "variables[SHA]=${CI_COMMIT_SHA}"
+      "https://git.zkm.de/api/v4/projects/1357/trigger/pipeline"

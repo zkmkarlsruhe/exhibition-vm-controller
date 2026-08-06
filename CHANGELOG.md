@@ -17,6 +17,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - VMware and VirtualBox backend support
 - Metrics collection and visualization (Prometheus/Grafana integration)
 
+## [2.2.0-rc.1] - 2026-06-10 (pre-release)
+
+Adds a **conservation toolkit** for understanding and reviving the network side
+of legacy artworks (dead servers, HTTPS interception, in-guest debugging), plus
+robustness/security fixes to the controller. See `host-controller/conservation/`.
+
+### Added — conservation toolkit (`host-controller/conservation/`)
+- **Containerized (Docker, "Option A")** — all tooling runs in one image so the
+  host stays clean; the only host footprint is a tiny stdlib `virsh-broker` (a
+  whitelisted unix-socket bridge) and a drop-in `virsh` shim, so existing scripts
+  run unchanged with least-privilege libvirt access.
+- **In-guest MCP agent** (`legacy_agent`, Go) — a single dependency-free Windows
+  executable that runs **XP → Windows 10** (built with Go 1.10 for XP), exposing
+  **32 debug tools** over MCP: processes/windows/control-tree, mouse+keyboard
+  injection, GDI screenshot, files, native registry get/set/delete, network
+  probes (`http_get`/`dns_lookup`/`tcp_probe`), and **silent CA install**. Runs
+  hidden, autostarts via a `Run` key. Python 3.4 reference implementation included.
+- **Host MCP shim** (`host_mcp.py`) — one MCP endpoint merging hypervisor tools
+  (screenshot, send-key, snapshots, lifecycle) with the in-guest agent (**44
+  tools**), reachable even on agentless/dead guests.
+- **mitmproxy proxy layer** (`serve_archive`) — serve a dead server's requests
+  from a local archive, record live ones to auto-build it, stub the rest. Shared
+  `archive_store` keeps the record and serve paths in sync.
+- **Multi-store CA install** (`install-trust`) — Windows root (silent registry
+  blob, no prompt), Java `cacerts` (via the JRE's `keytool`), Firefox/NSS
+  (enterprise-roots). For HTTPS interception.
+- **Traffic tools** — `capture_traffic` (tap-level inventory of what an artwork
+  reaches for) and a browser traffic inspector.
+- **Kiosk-hygiene panel** — toggleable, **reversible**, OS-aware tweaks to prep a
+  guest for unattended presentation (firewall/screensaver/updates/popups +
+  breakout hardening), and a guest hosts-file editor (point a hostname at the
+  proxy). Native registry access so even "disable cmd/regedit" stays revertible.
+- **Transparent interception** — broker-owned per-VM iptables REDIRECT + a stdlib
+  DNS responder; plus a **no-privilege nginx → archive front door**
+  (`nginx-unprivileged`, published on the VM-network IP only).
+
+### Fixed
+- **Dead config wired** — `vm_startup_wait_interval`, `vm_startup_max_attempts`,
+  and `qemu_agent_timeout` are now actually used (were documented but ignored).
+- `asyncio.get_event_loop()` → `get_running_loop()` (Python 3.12 deprecation).
+- **`run_shell` quoting** (in-guest agent) — pass `cmd.exe` the command line
+  verbatim, fixing mangled quoted paths / registry keys with spaces.
+
+### Changed / Security
+- **Destructive API endpoints are now origin-gated** — `vm/start|stop`,
+  `snapshot/create|delete`, `revert/enable|disable` reject requests from the
+  guest network (CSRF protection; a stray URL in proxied artwork content can no
+  longer destroy the `ready` snapshot). Operator/system requests are unaffected.
+- **VM lifecycle operations are serialized** with a reentrant lock — an
+  auto-recovery and a manual request can no longer issue overlapping reverts.
+- The post-revert conntrack flush (and the optional transparent-mode iptables)
+  now require scoped **NOPASSWD sudoers** rules — see `deployment/sudoers.d/`.
+
+### Tested
+- In-guest agent + proxy proven live on a Windows XP artwork guest (example):
+  silent CA install, archived dead-server page rendered in IE, native registry
+  toggles, screenshot, control-tree inspection. Win7/8/10 supported by design;
+  Java/NSS install paths and live transparent iptables need their runtimes/rule.
+
 ## [2.1.0] - 2026-03-25
 
 ### Added
@@ -151,14 +210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Choose Your Filter! Browser Art since the Beginnings of the World Wide Web" exhibition at ZKM Karlsruhe (February-August 2025)
 - 12 concurrent VM instances across multiple physical hosts
 - Windows XP guests with various browser-based artworks
-- Successful restoration of 8 historical digital artworks:
-  - Eden.Garden (2001) by Entropy8Zuper!
-  - Subfusion (2001-2002) by Stanza
-  - Wrong Browser Series (2001-2012) by JODI
-  - Browser Gestures (2001) by Mark Daggett
-  - ZNC browser 2.0 (2003) by Peter Luining
-  - <earshot> (1999) by Andy Freeman and Jason Skeets
-  - Reconnoitre (1997-2002) by Gavin Baily and Tom Corby
+- Successful restoration of 8 historical digital artworks (browser-based net art, 1997–2012)
 
 ### Performance
 - Snapshot revert: 2-5 seconds
@@ -315,4 +367,4 @@ See [CITATION.cff](CITATION.cff) for machine-readable citation metadata.
 
 ---
 
-*Last updated: 2026-03-25*
+*Last updated: 2026-06-10*

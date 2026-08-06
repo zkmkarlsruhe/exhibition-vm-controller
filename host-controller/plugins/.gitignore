@@ -1,7 +1,10 @@
-# Ignore all plugin files (custom per installation)
+# Plugins are custom per installation and artwork-specific — they (and their
+# asset/data directories) belong in the artwork's own repo, NOT here.
 *.py
+*/
 
-# Except example files
+# Except the framework examples
 !__init__.py
 !*.example.py
 !README.md
+!.gitignore

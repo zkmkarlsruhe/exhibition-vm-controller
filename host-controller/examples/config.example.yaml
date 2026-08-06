@@ -6,7 +6,7 @@ vm_name: "your-vm-name"  # Name of VM in libvirt (required)
 snapshot_name: "ready"    # Name of the reference snapshot to revert to
 
 # Heartbeat Configuration
-heartbeat_timeout: 15.0           # Seconds without heartbeat before considering VM failed
+heartbeat_timeout: 10.0           # Seconds without heartbeat before considering VM failed
 heartbeat_check_interval: 0.5     # Seconds between heartbeat timeout checks
 
 # VM Startup Configuration

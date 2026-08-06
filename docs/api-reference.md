@@ -24,6 +24,8 @@ The API provides automatic interactive documentation:
 
 Currently, the API has no authentication. It is designed for use in isolated exhibition environments where the host and VM are on a private network.
 
+**Guest-origin protection (CSRF):** the destructive endpoints — `vm/start`, `vm/stop`, `snapshot/create`, `snapshot/delete`, `revert/enable`, `revert/disable` — reject requests that originate from the **guest network** (HTTP 403). This prevents a stray URL in proxied/archived artwork content (rendered by the guest's browser) from destroying the `ready` snapshot or stopping the VM. Operator/system requests from outside the guest subnet are unaffected. `/api/v1/vm/restart` keeps its plugin phase-gate instead.
+
 ## Endpoints
 
 ### Root

@@ -70,6 +70,20 @@ sudo usermod -a -G kvm $USER
 
 Log out and log back in for changes to take effect.
 
+**Passwordless sudo for the conntrack flush:** after a snapshot revert the
+controller flushes stale conntrack entries so the guest can talk to the host
+again. This needs a scoped `NOPASSWD` sudoers rule — install the drop-in:
+
+```bash
+sudo cp deployment/sudoers.d/exhibition-vm-controller /etc/sudoers.d/
+sudo sed -i "s/YOUR_USERNAME/$USER/" /etc/sudoers.d/exhibition-vm-controller
+sudo chmod 0440 /etc/sudoers.d/exhibition-vm-controller
+```
+
+Without it the flush is skipped (the guest may be unreachable for a minute after
+each recovery). The same drop-in also grants the optional transparent-mode
+`iptables` rule used by the conservation toolkit.
+
 ### 1.3 Start libvirt Service
 
 ```bash

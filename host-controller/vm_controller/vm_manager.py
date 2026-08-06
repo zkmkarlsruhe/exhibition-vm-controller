@@ -13,11 +13,22 @@ libvirt, managing snapshots, and implementing automatic recovery mechanisms.
 import ipaddress
 import logging
 import subprocess
+import threading
 import time
 import xml.etree.ElementTree as ET
-from typing import List, Optional, Callable
+from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Hard bounds on virsh shell-outs. Every mutating VM op runs under VMManager._op_lock; WITHOUT a
+# timeout a hung libvirtd wedges run() forever, the executor thread never returns, and _op_lock is
+# held indefinitely — so every LATER op (auto-recovery, an operator's /vm/stop) deadlocks behind it.
+# With a timeout, run() kills the child and raises TimeoutExpired, which unwinds out of the `with
+# _op_lock` block and frees the lock. Values are generous for the slow ops (revert/create can carry
+# RAM state) but finite.
+_VIRSH_QUICK_TIMEOUT_S = 15  # domstate / snapshot-list — near-instant
+_VIRSH_OP_TIMEOUT_S = 60  # destroy / start / snapshot-delete
+_VIRSH_SLOW_TIMEOUT_S = 120  # snapshot-revert / snapshot-create-as (may persist RAM state)
 
 
 class VMManager:
@@ -42,6 +53,9 @@ class VMManager:
         snapshot_name: str = "ready",
         auto_revert_enabled: bool = True,
         on_reset_callback: Optional[Callable] = None,
+        startup_wait_interval: float = 10.0,
+        startup_max_attempts: int = 30,
+        qemu_agent_timeout: float = 5.0,
     ):
         """
         Initialize VMManager.
@@ -51,11 +65,22 @@ class VMManager:
             snapshot_name: Name of the reference snapshot (default: "ready")
             auto_revert_enabled: Enable automatic revert on failure
             on_reset_callback: Optional callback function to call on VM reset
+            startup_wait_interval: Seconds between VM responsiveness checks at startup
+            startup_max_attempts: Max responsiveness checks before giving up
+            qemu_agent_timeout: Timeout (s) for QEMU guest agent commands
         """
         self.vm_name = vm_name
         self.snapshot_name = snapshot_name
         self.auto_revert_enabled = auto_revert_enabled
         self.on_reset_callback = on_reset_callback
+        self.startup_wait_interval = startup_wait_interval
+        self.startup_max_attempts = startup_max_attempts
+        self.qemu_agent_timeout = qemu_agent_timeout
+
+        # Serializes all VM lifecycle mutations (start/stop/restart/snapshot)
+        # so an auto-recovery and a manual request can never issue overlapping
+        # virsh reverts. Reentrant: restart_vm() calls start_vm() while held.
+        self._op_lock = threading.RLock()
 
         # Discover VM network subnet from libvirt
         self.vm_network = self._discover_vm_network()
@@ -79,7 +104,9 @@ class VMManager:
             # Get the network name from the VM's interface
             result = subprocess.run(
                 ["virsh", "domiflist", self.vm_name],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode != 0:
                 return None
@@ -97,7 +124,9 @@ class VMManager:
             # Get the network's IP/netmask
             result = subprocess.run(
                 ["virsh", "net-dumpxml", network_name],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode != 0:
                 return None
@@ -115,12 +144,22 @@ class VMManager:
             logger.warning(f"Could not discover VM network: {e}")
         return None
 
-    def is_from_vm(self, client_ip: str) -> bool:
-        """Check if a client IP belongs to the VM's network."""
+    def ensure_vm_network(self) -> Optional[str]:
+        """Return the VM subnet, RE-DISCOVERING it if the one-shot probe at init came back empty
+        (a transient libvirt hiccup at startup otherwise leaves ``vm_network`` None for the whole
+        process — which makes the guest-origin guard fail open forever). Caches on success."""
         if not self.vm_network:
+            self.vm_network = self._discover_vm_network()
+        return self.vm_network
+
+    def is_from_vm(self, client_ip: str) -> bool:
+        """Check if a client IP belongs to the VM's network. Re-discovers the subnet on demand so a
+        startup discovery miss doesn't permanently blind the check."""
+        network = self.ensure_vm_network()
+        if not network:
             return False
         try:
-            return ipaddress.IPv4Address(client_ip) in ipaddress.IPv4Network(self.vm_network)
+            return ipaddress.IPv4Address(client_ip) in ipaddress.IPv4Network(network)
         except ValueError:
             return False
 
@@ -154,45 +193,110 @@ class VMManager:
             capture_output=True,
             text=True,
             check=True,
+            timeout=_VIRSH_QUICK_TIMEOUT_S,
         )
 
         snapshots = [s.strip() for s in result.stdout.split("\n") if s.strip()]
         logger.debug(f"Found {len(snapshots)} snapshots: {snapshots}")
         return snapshots
 
+    def _delete_snapshot_quiet(self, name: str, children: bool = False) -> None:
+        """Best-effort snapshot delete. Swallows a missing-snapshot error, logs anything else.
+
+        Used for cleanup paths where a failure to delete must not itself abort the caller.
+        """
+        argv = ["virsh", "snapshot-delete", self.vm_name, name]
+        if children:
+            argv.append("--children")
+        try:
+            subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=_VIRSH_OP_TIMEOUT_S,
+            )
+            logger.debug(f"Deleted snapshot '{name}'")
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr or ""
+            if (
+                "No snapshot with name" not in stderr
+                and "domain snapshot not found" not in stderr.lower()
+            ):
+                logger.warning(f"Could not delete snapshot '{name}': {stderr}")
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timed out deleting snapshot '{name}'")
+
     def create_snapshot(self, snapshot_name: Optional[str] = None) -> None:
         """
-        Create a new snapshot, deleting existing one with same name if present.
+        Create/refresh the golden snapshot WITHOUT ever leaving the VM with no ready-state
+        snapshot to fall back on.
+
+        The naive "delete then create" is unsafe: if the create times out or fails (disk full,
+        libvirt down), the golden ``ready`` snapshot is gone permanently and the exhibit can no
+        longer self-recover. Instead we:
+
+          1. Snapshot the current state under a STAGING name first. If this fails, the existing
+             golden snapshot is untouched — nothing was destroyed.
+          2. Verify the staging snapshot actually exists.
+          3. Only THEN retire the old golden and create the final one. If step 3's create fails,
+             the staging snapshot is deliberately left in place as a recovery point (an operator
+             can revert to it), so there is never a moment with zero ready-state snapshots.
 
         Args:
             snapshot_name: Name for the snapshot (default: use self.snapshot_name)
 
         Raises:
             subprocess.CalledProcessError: If snapshot creation fails
+            subprocess.TimeoutExpired: If a virsh op times out
+            RuntimeError: If the staging snapshot cannot be verified after creation
         """
         name = snapshot_name or self.snapshot_name
+        staging = f"{name}__staging"
         logger.info(f"Creating snapshot '{name}' for VM '{self.vm_name}'")
 
-        # Try to delete existing snapshot and its children (ignore if doesn't exist)
-        try:
+        with self._op_lock:
+            # 1. Clear any staging snapshot left behind by a previously aborted run, then create
+            #    the new snapshot under the staging name. The golden '{name}' is still untouched
+            #    here, so a failure at this point is fully recoverable.
+            self._delete_snapshot_quiet(staging, children=True)
             subprocess.run(
-                ["virsh", "snapshot-delete", self.vm_name, name, "--children"],
+                ["virsh", "snapshot-create-as", self.vm_name, staging],
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=_VIRSH_SLOW_TIMEOUT_S,
             )
-            logger.debug(f"Deleted existing snapshot '{name}' and its children")
-        except subprocess.CalledProcessError as e:
-            if "No snapshot with name" not in e.stderr and "domain snapshot not found" not in e.stderr.lower():
-                logger.warning(f"Could not delete existing snapshot: {e.stderr}")
 
-        # Create new snapshot
-        subprocess.run(
-            ["virsh", "snapshot-create-as", self.vm_name, name],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+            # 2. Verify the staging snapshot is really there before touching the golden one.
+            if staging not in self.list_snapshots():
+                self._delete_snapshot_quiet(staging, children=True)
+                raise RuntimeError(
+                    f"Staging snapshot '{staging}' not found after creation - refusing to "
+                    f"delete the existing '{name}' snapshot"
+                )
+
+            # 3. Retire the old golden and promote the verified state into its place. If the
+            #    final create fails, LEAVE the staging snapshot as a recovery point rather than
+            #    cleaning it up — better a mis-named snapshot than none at all.
+            self._delete_snapshot_quiet(name, children=True)
+            try:
+                subprocess.run(
+                    ["virsh", "snapshot-create-as", self.vm_name, name],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=_VIRSH_SLOW_TIMEOUT_S,
+                )
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                logger.critical(
+                    f"Failed to create final snapshot '{name}'; the verified snapshot '{staging}' "
+                    f"has been kept as a recovery point - revert to it or retry the snapshot"
+                )
+                raise
+
+            # 4. Success — the golden snapshot is committed; the staging copy is now redundant.
+            self._delete_snapshot_quiet(staging, children=True)
         logger.info(f"Snapshot '{name}' created successfully")
 
     def delete_snapshot(self, snapshot_name: Optional[str] = None) -> None:
@@ -208,12 +312,14 @@ class VMManager:
         name = snapshot_name or self.snapshot_name
         logger.info(f"Deleting snapshot '{name}' for VM '{self.vm_name}'")
 
-        subprocess.run(
-            ["virsh", "snapshot-delete", self.vm_name, name],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        with self._op_lock:
+            subprocess.run(
+                ["virsh", "snapshot-delete", self.vm_name, name],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=_VIRSH_OP_TIMEOUT_S,
+            )
         logger.info(f"Snapshot '{name}' deleted successfully")
 
     def stop_vm(self) -> None:
@@ -228,21 +334,22 @@ class VMManager:
         """
         logger.info(f"Stopping VM '{self.vm_name}'")
 
-        try:
-            subprocess.run(
-                ["virsh", "destroy", self.vm_name],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            logger.info("VM stopped successfully")
-        except subprocess.CalledProcessError as e:
-            if "Domain not running" in e.stderr or "domain is not running" in e.stderr:
-                logger.info("VM was not running")
-            else:
-                logger.error(f"Error stopping VM: {e.stderr}")
-                raise
-
+        with self._op_lock:
+            try:
+                subprocess.run(
+                    ["virsh", "destroy", self.vm_name],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=_VIRSH_OP_TIMEOUT_S,
+                )
+                logger.info("VM stopped successfully")
+            except subprocess.CalledProcessError as e:
+                if "Domain not running" in e.stderr or "domain is not running" in e.stderr:
+                    logger.info("VM was not running")
+                else:
+                    logger.error(f"Error stopping VM: {e.stderr}")
+                    raise
 
     def start_vm(self) -> None:
         """
@@ -255,45 +362,49 @@ class VMManager:
             RuntimeError: If snapshot doesn't exist
             subprocess.CalledProcessError: If revert fails
         """
-        # Check if snapshot exists
-        if self.snapshot_exists():
-            logger.info(
-                f"Starting VM '{self.vm_name}' by reverting to snapshot '{self.snapshot_name}'"
-            )
+        with self._op_lock:
+            # Check if snapshot exists
+            if self.snapshot_exists():
+                logger.info(
+                    f"Starting VM '{self.vm_name}' by reverting to snapshot '{self.snapshot_name}'"
+                )
 
-            # Call reset callback if provided
-            if self.on_reset_callback:
-                try:
-                    self.on_reset_callback()
-                except Exception as e:
-                    logger.error(f"Error in reset callback: {e}")
+                # Call reset callback if provided
+                if self.on_reset_callback:
+                    try:
+                        self.on_reset_callback()
+                    except Exception as e:
+                        logger.error(f"Error in reset callback: {e}")
 
-            # Revert to snapshot (this also starts the VM)
-            subprocess.run(
-                ["virsh", "snapshot-revert", self.vm_name, self.snapshot_name],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            logger.info("VM reverted to snapshot and started successfully")
-        else:
-            # No snapshot exists, just start the VM
-            logger.warning(
-                f"Snapshot '{self.snapshot_name}' does not exist - starting VM without revert"
-            )
-            subprocess.run(
-                ["virsh", "start", self.vm_name],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            logger.info(f"VM '{self.vm_name}' started successfully")
+                # Revert to snapshot (this also starts the VM)
+                subprocess.run(
+                    ["virsh", "snapshot-revert", self.vm_name, self.snapshot_name],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=_VIRSH_SLOW_TIMEOUT_S,
+                )
+                logger.info("VM reverted to snapshot and started successfully")
+            else:
+                # FAIL CLOSED: with no 'ready' snapshot there is no clean recovery baseline to
+                # revert to. Booting the raw disk here would put the *mutable / possibly tampered*
+                # exhibit state on screen and — worse — let the auto-recovery path "recover" into
+                # un-reverted state. Refuse instead of silently booting dirty state; an operator
+                # must (re-)create the ready snapshot before the VM can be started.
+                logger.error(
+                    f"Snapshot '{self.snapshot_name}' does not exist - refusing to start VM "
+                    f"without a recovery baseline (fail-closed)"
+                )
+                raise RuntimeError(
+                    f"Snapshot '{self.snapshot_name}' does not exist for VM '{self.vm_name}'; "
+                    f"refusing to boot un-reverted disk state. Create the ready snapshot first."
+                )
 
-        # Flush conntrack entries for the VM's network to clear stale TCP state.
-        # After a snapshot revert, the VM resumes with TCP connections from before
-        # the snapshot. The kernel's conntrack table still has the old connection
-        # entries, causing packets with mismatched sequence numbers to be dropped.
-        self._flush_conntrack()
+            # Flush conntrack entries for the VM's network to clear stale TCP state.
+            # After a snapshot revert, the VM resumes with TCP connections from before
+            # the snapshot. The kernel's conntrack table still has the old connection
+            # entries, causing packets with mismatched sequence numbers to be dropped.
+            self._flush_conntrack()
 
     def _flush_conntrack(self) -> None:
         """Flush conntrack entries for the VM network to clear stale TCP state.
@@ -316,7 +427,7 @@ class VMManager:
         except Exception as e:
             logger.debug(f"conntrack flush: {e}")
 
-    def check_vm_responsiveness(self, timeout: float = 5.0) -> bool:
+    def check_vm_responsiveness(self, timeout: Optional[float] = None) -> bool:
         """
         Check if VM is responsive using QEMU guest agent.
 
@@ -325,11 +436,13 @@ class VMManager:
         in the guest.
 
         Args:
-            timeout: Timeout in seconds for the check
+            timeout: Timeout in seconds for the check (default: qemu_agent_timeout)
 
         Returns:
             True if VM responds, False otherwise
         """
+        if timeout is None:
+            timeout = self.qemu_agent_timeout
         logger.debug(f"Checking VM '{self.vm_name}' responsiveness via QEMU guest agent")
 
         try:
@@ -352,7 +465,7 @@ class VMManager:
             return False
 
     def wait_for_vm_ready(
-        self, check_interval: float = 10.0, max_attempts: int = 30
+        self, check_interval: Optional[float] = None, max_attempts: Optional[int] = None
     ) -> bool:
         """
         Wait for VM to become responsive after start/revert.
@@ -360,12 +473,16 @@ class VMManager:
         Polls the VM using QEMU guest agent until it responds or timeout.
 
         Args:
-            check_interval: Seconds between checks
-            max_attempts: Maximum number of attempts before giving up
+            check_interval: Seconds between checks (default: startup_wait_interval)
+            max_attempts: Maximum attempts before giving up (default: startup_max_attempts)
 
         Returns:
             True if VM became responsive, False if timed out
         """
+        if check_interval is None:
+            check_interval = self.startup_wait_interval
+        if max_attempts is None:
+            max_attempts = self.startup_max_attempts
         logger.info(f"Waiting for VM '{self.vm_name}' to become responsive...")
 
         for attempt in range(1, max_attempts + 1):
@@ -404,12 +521,15 @@ class VMManager:
         """
         logger.info(f"Restarting VM '{self.vm_name}'")
 
-        self.start_vm()
+        # Hold the lock across both the revert and the readiness wait so a
+        # second restart cannot revert again while this one is still booting.
+        with self._op_lock:
+            self.start_vm()
 
-        if wait_for_ready:
-            return self.wait_for_vm_ready()
+            if wait_for_ready:
+                return self.wait_for_vm_ready()
 
-        return True
+            return True
 
     def get_vm_state(self) -> str:
         """
@@ -426,6 +546,7 @@ class VMManager:
             capture_output=True,
             text=True,
             check=True,
+            timeout=_VIRSH_QUICK_TIMEOUT_S,
         )
 
         state = result.stdout.strip()

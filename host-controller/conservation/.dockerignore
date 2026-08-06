@@ -1,0 +1,11 @@
+# keep the build context (and image) clean
+**/.venv
+**/__pycache__
+**/*.pyc
+proxy/archive/*
+proxy/ca/*
+guest_agent/go/legacy-agent.exe
+guest_agent/go/*.exe
+*.pcap
+*.bmp
+*.png
