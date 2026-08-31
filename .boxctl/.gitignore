@@ -1,0 +1,11 @@
+# Runtime files (auto-generated)
+mcp.json
+install-manifest.json
+
+# Environment secrets (if used)
+.env
+.env.local
+
+# Runtime directories
+logs/
+state/

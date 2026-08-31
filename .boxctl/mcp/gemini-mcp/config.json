@@ -1,0 +1,10 @@
+{
+  "name": "gemini-mcp",
+  "description": "Invoke Gemini agent for research, analysis, testing, and cross-validation tasks",
+  "allowed_agents": ["claude", "codex"],
+  "blocked_agents": ["gemini"],
+  "config": {
+    "command": "python3",
+    "args": ["server.py"]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "ssh",
+  "description": "SSH MCP Server - manage remote servers via SSH with native tools",
+  "config": {
+    "command": "npx",
+    "args": ["-y", "@aiondadotcom/mcp-ssh"]
+  },
+  "install": {
+    "npm": ["@aiondadotcom/mcp-ssh"]
+  },
+  "notes": "Auto-discovers SSH hosts from ~/.ssh/config and ~/.ssh/known_hosts. Uses native ssh/scp commands for maximum reliability. Supports SSH agents, jump hosts, and all SSH config features."
+}

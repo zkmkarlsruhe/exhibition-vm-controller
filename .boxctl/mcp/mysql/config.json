@@ -1,0 +1,19 @@
+{
+  "name": "mysql",
+  "description": "MySQL database access - query tables, read data, execute SQL",
+  "config": {
+    "command": "mysql_mcp_server",
+    "args": [],
+    "env": {
+      "MYSQL_HOST": "${MYSQL_HOST:-localhost}",
+      "MYSQL_PORT": "${MYSQL_PORT:-3306}",
+      "MYSQL_USER": "${MYSQL_USER}",
+      "MYSQL_PASSWORD": "${MYSQL_PASSWORD}",
+      "MYSQL_DATABASE": "${MYSQL_DATABASE}"
+    }
+  },
+  "install": {
+    "pip": ["mysql-mcp-server"]
+  },
+  "notes": "Set MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE in .agentbox/.env"
+}

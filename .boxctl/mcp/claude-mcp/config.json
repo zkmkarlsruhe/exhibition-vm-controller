@@ -1,0 +1,10 @@
+{
+  "name": "claude-mcp",
+  "description": "Invoke Claude agent for tasks requiring strong reasoning and architecture design",
+  "allowed_agents": ["codex", "gemini"],
+  "blocked_agents": ["claude"],
+  "config": {
+    "command": "python3",
+    "args": ["server.py"]
+  }
+}

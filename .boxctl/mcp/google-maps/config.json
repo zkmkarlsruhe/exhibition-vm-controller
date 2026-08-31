@@ -1,0 +1,15 @@
+{
+  "name": "google-maps",
+  "description": "Google Maps integration - location services, routing, place details",
+  "config": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-google-maps"],
+    "env": {
+      "GOOGLE_MAPS_API_KEY": "${GOOGLE_MAPS_API_KEY}"
+    }
+  },
+  "env_template": {
+    "GOOGLE_MAPS_API_KEY": "your_api_key_here"
+  },
+  "notes": "Get API key from: https://console.cloud.google.com/google/maps-apis\nEnable Maps JavaScript API and Places API"
+}

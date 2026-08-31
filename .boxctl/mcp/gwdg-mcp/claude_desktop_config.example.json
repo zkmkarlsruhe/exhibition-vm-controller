@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "saia": {
+      "command": "saia-mcp",
+      "env": {
+        "SAIA_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "sqlite",
+  "description": "SQLite database operations with schema inspection and queries",
+  "config": {
+    "command": "uvx",
+    "args": ["mcp-server-sqlite", "--db-path", "/workspace/data.db"]
+  },
+  "notes": "Provides SQLite database access. Update --db-path to point to your database file."
+}

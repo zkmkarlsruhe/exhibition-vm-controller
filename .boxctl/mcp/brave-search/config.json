@@ -1,0 +1,15 @@
+{
+  "name": "brave-search",
+  "description": "Web search via Brave Search API - web, news, images, videos",
+  "config": {
+    "command": "npx",
+    "args": ["-y", "@brave/brave-search-mcp-server"],
+    "env": {
+      "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+    }
+  },
+  "install": {
+    "npm": ["@brave/brave-search-mcp-server"]
+  },
+  "notes": "Get API key from https://brave.com/search/api/ and set BRAVE_API_KEY in .agentbox/.env"
+}

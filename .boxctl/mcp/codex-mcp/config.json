@@ -1,0 +1,10 @@
+{
+  "name": "codex-mcp",
+  "description": "Invoke Codex agent for code generation, implementation, and validation tasks",
+  "allowed_agents": ["claude", "gemini"],
+  "blocked_agents": ["codex"],
+  "config": {
+    "command": "python3",
+    "args": ["server.py"]
+  }
+}

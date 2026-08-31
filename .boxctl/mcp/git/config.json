@@ -1,0 +1,9 @@
+{
+  "name": "git",
+  "description": "Git repository operations - read, search, analyze commits and diffs",
+  "config": {
+    "command": "uvx",
+    "args": ["mcp-server-git", "--repository", "/workspace"]
+  },
+  "notes": "Provides Git repository access. Default repository is /workspace. Can analyze commits, diffs, and history."
+}

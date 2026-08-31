@@ -1,0 +1,9 @@
+{
+  "name": "fetch",
+  "description": "Fetch web content and process it for AI consumption",
+  "config": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-fetch"]
+  },
+  "notes": "Efficiently fetch and process web content. Handles HTML, JSON, and other formats."
+}

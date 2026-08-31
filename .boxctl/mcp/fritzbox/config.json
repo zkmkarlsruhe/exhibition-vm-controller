@@ -1,0 +1,29 @@
+{
+  "name": "fritzbox",
+  "description": "FRITZ!Box router MCP - network status, devices, WiFi, call logs",
+  "config": {
+    "command": "fritz-mcp",
+    "args": [],
+    "env": {
+      "FRITZ_HOST": "${FRITZ_HOST:-fritz.box}",
+      "FRITZ_USERNAME": "${FRITZ_USERNAME}",
+      "FRITZ_PASSWORD": "${FRITZ_PASSWORD}"
+    }
+  },
+  "install": {
+    "post": [
+      "mkdir -p ~/.local/bin",
+      "curl -fsSL https://github.com/kambriso/fritzbox-mcp-server/releases/download/v0.5.0/fritz-mcp-linux-amd64.tar.xz -o /tmp/fritz-mcp.tar.xz",
+      "tar -xJf /tmp/fritz-mcp.tar.xz -C /tmp",
+      "mv /tmp/fritz-mcp ~/.local/bin/fritz-mcp",
+      "chmod +x ~/.local/bin/fritz-mcp",
+      "rm /tmp/fritz-mcp.tar.xz"
+    ]
+  },
+  "env_template": {
+    "FRITZ_HOST": "fritz.box",
+    "FRITZ_USERNAME": "your-fritzbox-username",
+    "FRITZ_PASSWORD": "your-fritzbox-password"
+  },
+  "notes": "FRITZ!Box user needs 'FRITZ!Box-Einstellungen' permission enabled.\nWorks with all FRITZ!Box models. Discovers capabilities automatically.\nSource: https://github.com/kambriso/fritzbox-mcp-server"
+}

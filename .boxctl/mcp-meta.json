@@ -1,0 +1,35 @@
+{
+  "servers": {
+    "agentctl": {
+      "config": {
+        "command": "python3",
+        "args": [
+          "/workspace/.boxctl/mcp/agentctl/server_fastmcp.py"
+        ],
+        "env": {}
+      },
+      "source_type": "library",
+      "source_name": "agentctl",
+      "install": {
+        "pip": [
+          "fastmcp>=2.0.0"
+        ]
+      }
+    },
+    "boxctl-analyst": {
+      "config": {
+        "command": "python3",
+        "args": [
+          "/workspace/.boxctl/mcp/boxctl-analyst/server.py"
+        ]
+      },
+      "source_type": "library",
+      "source_name": "boxctl-analyst",
+      "install": {
+        "pip": [
+          "fastmcp>=2.0.0"
+        ]
+      }
+    }
+  }
+}

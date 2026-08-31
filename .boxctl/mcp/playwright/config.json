@@ -1,0 +1,13 @@
+{
+  "name": "playwright",
+  "description": "Browser automation - navigate, click, fill forms, screenshots",
+  "config": {
+    "command": "npx",
+    "args": ["@playwright/mcp@latest", "--headless"]
+  },
+  "install": {
+    "npm": ["@playwright/mcp", "playwright"],
+    "post": ["npx playwright install --force chrome --with-deps"]
+  },
+  "notes": "Microsoft Playwright MCP for browser automation without vision models. Uses Chrome with system dependencies. Runs in headless mode for containerized environments."
+}

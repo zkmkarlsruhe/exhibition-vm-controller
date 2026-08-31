@@ -1,0 +1,14 @@
+{
+  "name": "gwdg-saia",
+  "description": "MCP server for GWDG SAIA API - chat, embeddings, vision, image generation, and audio transcription",
+  "config": {
+    "command": "saia-mcp",
+    "env": {
+      "SAIA_API_KEY": "${SAIA_API_KEY}"
+    }
+  },
+  "env_template": {
+    "SAIA_API_KEY": "your-api-key-here"
+  },
+  "notes": "Get API key from KISSKI LLM Service: https://kisski.gwdg.de/en/leistungen/2-02-llm-service"
+}
