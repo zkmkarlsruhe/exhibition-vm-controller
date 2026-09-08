@@ -8,6 +8,7 @@ readme = "README.md"
 homepage = "https://github.com/zkmkarlsruhe/exhibition-vm-controller"
 repository = "https://github.com/zkmkarlsruhe/exhibition-vm-controller"
 keywords = ["digital-art", "conservation", "virtualization", "museum", "exhibition"]
+packages = [{ include = "vm_controller" }]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Other Audience",
