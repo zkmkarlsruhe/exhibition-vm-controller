@@ -288,3 +288,18 @@ For implementation details, see:
 - [Heartbeat Protocol](heartbeat-protocol.md) - Communication specification
 - [API Reference](api-reference.md) - REST endpoints
 - [Troubleshooting](troubleshooting.md) - Common issues
+
+## Emulator processes
+
+`backend: process` runs an emulator from one command line instead of a libvirt domain, through
+`vmctl_core.backends.ProcessBackend`. The definition is `process.json` in `process_dir`; see
+`deployment/configs/process-example.yaml`.
+
+- **Snapshot:** a cold copy of the writable images with SHA-256 sums. Revert verifies the copy and
+  restores it; a damaged copy fails closed. Starting boots the machine, there is no RAM state.
+  Create `ready` while the emulator is stopped.
+- **Liveness:** no script runs inside the machine and the work stays unmodified, so the controller
+  feeds its own heartbeat monitor. The process must run and, if `alive_file` is set, that file must
+  be fresh. Without an alive file a hang inside the emulator goes unnoticed.
+- **Guards:** no guest can reach the API, so the guest-origin guards do not apply. Bind the API to
+  localhost. HTTP heartbeats stay refused.

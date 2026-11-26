@@ -19,10 +19,12 @@ import subprocess
 import sys
 import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
-import recipes as R
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # guest_ip.py
+import guest_ip  # noqa: E402,I001
 import hosts as HOSTS
+import recipes as R
 
 AGENT = None
 VM = ""
@@ -30,14 +32,7 @@ CA_PEM = None
 
 
 def resolve_ip(vm):
-    r = subprocess.run(
-        ["virsh", "domifaddr", vm, "--source", "agent"], capture_output=True, text=True, timeout=20
-    )
-    for line in r.stdout.splitlines():
-        for tok in line.split():
-            if tok.count(".") == 3 and not tok.startswith("127."):
-                return tok.split("/")[0]
-    return None
+    return guest_ip.resolve_ip(vm)
 
 
 def grouped():

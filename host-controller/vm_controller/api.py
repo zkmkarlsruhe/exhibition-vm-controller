@@ -15,6 +15,8 @@ import argparse
 import asyncio
 import logging
 import os
+import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -24,7 +26,9 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from vmctl_core.backends import ProcessBackend
 
+from vm_controller import __version__
 from vm_controller.config import Config
 from vm_controller.heartbeat_monitor import HeartbeatMonitor
 from vm_controller.plugins import PluginRegistry
@@ -73,8 +77,8 @@ def _deny_from_vm(request: Request) -> None:
     process lifetime. Override with config ``guest_guard_fail_open=True``.
     """
     client_ip = _client_ip(request)
-    if not vm_manager:
-        return
+    if not vm_manager or vm_manager.host_liveness:
+        return  # no guest can reach the API, so every caller is the operator
     # FAIL CLOSED: ensure_vm_network() re-discovers if the init probe missed. If the subnet is
     # STILL unknown we can't prove the request isn't from the guest, so deny — a single startup
     # discovery miss must not leave the golden snapshot destroyable for the whole process lifetime.
@@ -82,7 +86,7 @@ def _deny_from_vm(request: Request) -> None:
     network_known = vm_manager.ensure_vm_network() is not None
     fail_open = bool(config and getattr(config, "guest_guard_fail_open", False))
     if not network_known and not fail_open:
-        logger.error(
+        logger.debug(
             "VM subnet unknown - denying destructive request from %s (fail-closed; set "
             "guest_guard_fail_open=True to override)",
             client_ip,
@@ -98,6 +102,40 @@ def _deny_from_vm(request: Request) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This operation is not permitted from the guest network",
+        )
+
+
+#: Shortest gap between two GUEST-triggered reverts. A guest asking to be reset is a designed
+#: feature — a work that knows it has wedged itself says so — but the only thing standing between
+#: that and a loop was an OPTIONAL plugin hook, so an exhibit with no such plugin (most of them)
+#: could be driven into a permanent revert cycle by anything running inside it, and a visitor
+#: would see a machine that reboots forever. Operator requests are NOT limited: a conservator at
+#: the host must always be able to reset, twice in a row if that is what the piece needs.
+GUEST_RESTART_MIN_INTERVAL_S = 60.0
+
+#: monotonic timestamp of the last guest-triggered restart (process-local; the controller owns
+#: exactly one exhibit).
+_last_guest_restart: float = 0.0
+
+
+def _rate_limit_guest_restart() -> None:
+    """Refuse a guest-triggered revert that follows too closely on the previous one.
+
+    Checks only; restart_vm() stamps the window AFTER the plugin gate and a successful revert,
+    so a refused or failed request does not burn the window for the next one."""
+    waited = time.monotonic() - _last_guest_restart
+    if _last_guest_restart and waited < GUEST_RESTART_MIN_INTERVAL_S:
+        logger.warning(
+            "guest-triggered restart refused: %.1fs since the last one (minimum %.0fs)",
+            waited,
+            GUEST_RESTART_MIN_INTERVAL_S,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"a guest-triggered restart ran {waited:.0f}s ago; "
+                f"wait {GUEST_RESTART_MIN_INTERVAL_S:.0f}s between resets"
+            ),
         )
 
 
@@ -122,7 +160,7 @@ def _require_from_vm(request: Request) -> None:
     if not network_known:
         if fail_open:
             return
-        logger.error(
+        logger.debug(
             "VM subnet unknown - rejecting heartbeat from %s (fail-closed; watchdog may revert). "
             "Set guest_guard_fail_open=True to override.",
             client_ip,
@@ -143,6 +181,17 @@ def _require_from_vm(request: Request) -> None:
 vm_manager: Optional[VMManager] = None
 heartbeat_monitor: Optional[HeartbeatMonitor] = None
 config: Optional[Config] = None
+
+
+def _cfg() -> Config:
+    """The loaded config. None only BEFORE startup: lifespan() re-raises when it cannot load one,
+    so nothing that runs afterwards can see None — this states that once instead of every caller
+    guessing, and turns a would-be AttributeError into a sentence."""
+    if config is None:
+        raise RuntimeError("configuration not loaded yet (called before startup?)")
+    return config
+
+
 plugin_registry: Optional[PluginRegistry] = None
 config_path: Path = Path(os.environ.get("VMCTL_CONFIG", "config.yaml"))
 
@@ -171,6 +220,7 @@ class StatusResponse(BaseModel):
     snapshot_exists: bool
     heartbeat: dict
     auto_revert_enabled: bool
+    probe: Optional[dict] = None
 
 
 class SnapshotInfo(BaseModel):
@@ -194,9 +244,78 @@ class MessageResponse(BaseModel):
     details: Optional[dict] = None
 
 
+async def _host_liveness_loop() -> None:
+    """Heartbeats for a machine that cannot send any: the backend reports its liveness."""
+    assert vm_manager is not None and heartbeat_monitor is not None
+    while True:
+        alive = await asyncio.to_thread(vm_manager.check_vm_responsiveness)
+        if alive is None:
+            heartbeat_monitor.defer_timeout()
+        elif alive:
+            heartbeat_monitor.receive_heartbeat()
+        await asyncio.sleep(1.0)
+
+
+async def on_heartbeat_timeout() -> None:
+    """Heartbeat-timeout callback: revert the VM, then re-arm the monitor.
+
+    Module-level (not a lifespan closure) so tests can drive it against a fake VM manager.
+    """
+    if vm_manager and vm_manager.auto_revert_enabled:
+        logger.error("Heartbeat timeout - initiating VM restart")
+        try:
+            # Capture the desired-state token BEFORE the revert. An operator /vm/stop issued
+            # DURING the revert bumps the generation (disable()); capturing here — not after
+            # the revert — means the deferred re-arm below detects the mismatch and stands
+            # down, so the intentional stop wins instead of being silently overridden by this
+            # in-flight recovery.
+            pre_revert_generation = heartbeat_monitor.generation if heartbeat_monitor else 0
+
+            # Run synchronous VM restart in thread pool
+            # Skip waiting for VM ready if QEMU agent checking is disabled
+            loop = asyncio.get_running_loop()
+            wait_for_ready = _cfg().check_qemu_agent
+            success = await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
+
+            # restart_vm(wait_for_ready=True) returns False when the guest never becomes QEMU-
+            # agent ready. Do NOT return here: start_vm() already reset() the monitor
+            # (last_heartbeat=None), so returning would leave is_timed_out() False forever and
+            # the hung exhibit would never be retried. Fall through to the re-arm below instead;
+            # a still-silent guest trips the timeout again, throttled by recovery_backoff.
+            if wait_for_ready and not success:
+                logger.error(
+                    "VM did not become ready after auto-recovery restart - re-arming so "
+                    "recovery is retried"
+                )
+            else:
+                logger.info("VM restarted successfully after heartbeat timeout")
+
+            # Wait for VM to be ready, then re-ARM heartbeat monitoring. reset() ALONE leaves
+            # last_heartbeat=None, and is_timed_out() returns False while None — so after an
+            # auto-recovery a booted-but-silent guest (AutoIt heartbeat never comes back) would
+            # NEVER be caught by the timeout path again. enable() restarts the timeout clock,
+            # matching the manual /vm/restart path (reset → enable).
+            #
+            # Gate the re-enable on the generation token captured BEFORE the revert (above)
+            # so an operator /vm/stop during either the revert or the boot delay is not
+            # silently overridden.
+            if heartbeat_monitor:
+                heartbeat_monitor.reset()
+                await asyncio.sleep(_cfg().vm_startup_heartbeat_delay)
+                if heartbeat_monitor.enable_if_current(pre_revert_generation):
+                    logger.info("Heartbeat monitoring re-armed")
+
+        except Exception as e:
+            logger.error(f"Failed to restart VM after timeout: {e}", exc_info=True)
+    else:
+        logger.warning(
+            "Heartbeat timeout detected but auto-revert is disabled - manual intervention required"
+        )
+
+
 # Lifespan context manager
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     Startup and shutdown events for the API.
 
@@ -220,7 +339,10 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("config.yaml not found, using environment variables/defaults")
         try:
-            config = Config()
+            # vm_name has no literal default — pydantic-settings sources it from
+            # VMCTL_VM_NAME. mypy sees a required field and cannot see the env layer; a missing
+            # value raises below and the startup aborts, which is the intended behaviour.
+            config = Config()  # type: ignore[call-arg]
         except Exception as e:
             logger.error(f"Failed to load configuration: {e}")
             raise
@@ -228,62 +350,10 @@ async def lifespan(app: FastAPI):
     config.configure_logging()
     logger.info(f"Configuration loaded: {config.get_summary()}")
 
-    # Initialize heartbeat monitor with restart callback
-    async def on_heartbeat_timeout():
-        """Callback when heartbeat times out."""
-        if vm_manager and vm_manager.auto_revert_enabled:
-            logger.error("Heartbeat timeout - initiating VM restart")
-            try:
-                # Capture the desired-state token BEFORE the revert. An operator /vm/stop issued
-                # DURING the revert bumps the generation (disable()); capturing here — not after
-                # the revert — means the deferred re-arm below detects the mismatch and stands
-                # down, so the intentional stop wins instead of being silently overridden by this
-                # in-flight recovery.
-                pre_revert_generation = heartbeat_monitor.generation if heartbeat_monitor else 0
-
-                # Run synchronous VM restart in thread pool
-                # Skip waiting for VM ready if QEMU agent checking is disabled
-                loop = asyncio.get_running_loop()
-                wait_for_ready = config.check_qemu_agent
-                success = await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
-
-                # restart_vm(wait_for_ready=True) returns False when the guest never becomes QEMU-
-                # agent ready. Re-arming here would declare the exhibit healthy while it is still
-                # hung; instead leave the clock untouched so the monitor retries recovery on the
-                # next cycle (throttled by recovery_backoff).
-                if wait_for_ready and not success:
-                    logger.error(
-                        "VM did not become ready after auto-recovery restart - not re-arming; "
-                        "recovery will be retried"
-                    )
-                    return
-
-                logger.info("VM restarted successfully after heartbeat timeout")
-
-                # Wait for VM to be ready, then re-ARM heartbeat monitoring. reset() ALONE leaves
-                # last_heartbeat=None, and is_timed_out() returns False while None — so after an
-                # auto-recovery a booted-but-silent guest (AutoIt heartbeat never comes back) would
-                # NEVER be caught by the timeout path again. enable() restarts the timeout clock,
-                # matching the manual /vm/restart path (reset → enable).
-                #
-                # Gate the re-enable on the generation token captured BEFORE the revert (above)
-                # so an operator /vm/stop during either the revert or the boot delay is not
-                # silently overridden.
-                if heartbeat_monitor:
-                    heartbeat_monitor.reset()
-                    await asyncio.sleep(config.vm_startup_heartbeat_delay)
-                    if heartbeat_monitor.enable_if_current(pre_revert_generation):
-                        logger.info("Heartbeat monitoring re-armed")
-
-            except Exception as e:
-                logger.error(f"Failed to restart VM after timeout: {e}", exc_info=True)
-        else:
-            logger.warning(
-                "Heartbeat timeout detected but auto-revert is disabled - "
-                "manual intervention required"
-            )
-
     # Initialize VM manager first (needed for heartbeat monitor)
+    backend = None
+    if config.backend == "process":
+        backend = ProcessBackend(config.vm_name, instance_dir=config.process_dir)
     vm_manager = VMManager(
         vm_name=config.vm_name,
         snapshot_name=config.snapshot_name,
@@ -292,7 +362,15 @@ async def lifespan(app: FastAPI):
         startup_wait_interval=config.vm_startup_wait_interval,
         startup_max_attempts=config.vm_startup_max_attempts,
         qemu_agent_timeout=config.qemu_agent_timeout,
+        backend=backend,
     )
+    if vm_manager.vm_network is None and not vm_manager.host_liveness:
+        # Said once here; the per-request guards only log at debug level.
+        logger.error(
+            "VM subnet unknown: the VM needs a libvirt NAT network (bridged is unsupported). "
+            "Heartbeats and destructive requests are refused (fail-closed) until discovery "
+            "succeeds; set guest_guard_fail_open=True to override."
+        )
 
     # Initialize heartbeat monitor with VM state monitoring
     heartbeat_monitor = HeartbeatMonitor(
@@ -304,7 +382,7 @@ async def lifespan(app: FastAPI):
     )
 
     # Set VM reset callback now that heartbeat monitor exists
-    def on_vm_reset():
+    def on_vm_reset() -> None:
         """Callback when VM is reset."""
         if heartbeat_monitor:
             heartbeat_monitor.reset()
@@ -334,7 +412,7 @@ async def lifespan(app: FastAPI):
         logger.info("Ensuring VM is in clean state on startup...")
         try:
             loop = asyncio.get_running_loop()
-            wait_for_ready = config.check_qemu_agent
+            wait_for_ready = _cfg().check_qemu_agent
             success = await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
             if wait_for_ready and not success:
                 # The revert ran but the guest never became QEMU-agent ready. Don't crash startup
@@ -355,20 +433,23 @@ async def lifespan(app: FastAPI):
     # Start heartbeat monitoring (delay enabling to give VM time to boot AutoIT scripts)
     await heartbeat_monitor.start_monitoring()
 
-    async def _delayed_heartbeat_enable():
+    async def _delayed_heartbeat_enable() -> None:
         # Capture the desired-state token now; if an operator /vm/stop bumps it during the sleep,
         # enable_if_current() refuses to arm and the stop stands. The task is also tracked so
         # /vm/stop can cancel it outright.
         generation = heartbeat_monitor.generation
         logger.info(
-            f"Waiting {config.vm_startup_heartbeat_delay}s before enabling heartbeat monitoring..."
+            f"Waiting {_cfg().vm_startup_heartbeat_delay}s before enabling heartbeat monitoring..."
         )
-        await asyncio.sleep(config.vm_startup_heartbeat_delay)
+        await asyncio.sleep(_cfg().vm_startup_heartbeat_delay)
         if heartbeat_monitor.enable_if_current(generation):
             logger.info("Heartbeat monitoring enabled after startup delay")
 
     global _delayed_enable_task
     _delayed_enable_task = asyncio.create_task(_delayed_heartbeat_enable())
+    liveness_task = None
+    if vm_manager.host_liveness:
+        liveness_task = asyncio.create_task(_host_liveness_loop())
 
     logger.info("Exhibition VM Controller API started successfully")
 
@@ -378,6 +459,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Exhibition VM Controller API...")
 
     _cancel_delayed_enable()
+    if liveness_task:
+        liveness_task.cancel()
 
     # Run plugin shutdown hooks
     if plugin_registry:
@@ -400,7 +483,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Exhibition VM Controller API",
     description="REST API for controlling VMs in exhibition environments",
-    version="2.2.0-rc.1",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -412,7 +495,7 @@ if static_path.exists():
 
 # API Endpoints
 @app.get("/api/v1/status", response_model=StatusResponse)
-async def get_status():
+async def get_status() -> StatusResponse:
     """Get current VM and monitoring status."""
     if not vm_manager or not heartbeat_monitor:
         raise HTTPException(
@@ -421,14 +504,18 @@ async def get_status():
         )
 
     try:
+        # Three virsh calls, each with a 30 s timeout: off the loop, like every other endpoint,
+        # so a libvirt stall during a UI poll cannot block heartbeat intake and trip a revert.
+        loop = asyncio.get_running_loop()
         return StatusResponse(
             vm_name=vm_manager.vm_name,
-            vm_state=vm_manager.get_vm_state(),
-            vm_is_running=vm_manager.is_running(),
+            vm_state=await loop.run_in_executor(None, vm_manager.get_vm_state),
+            vm_is_running=await loop.run_in_executor(None, vm_manager.is_running),
             snapshot_name=vm_manager.snapshot_name,
-            snapshot_exists=vm_manager.snapshot_exists(),
+            snapshot_exists=await loop.run_in_executor(None, vm_manager.snapshot_exists),
             heartbeat=heartbeat_monitor.get_status(),
             auto_revert_enabled=vm_manager.auto_revert_enabled,
+            probe=vm_manager.probe_detail,
         )
     except Exception as e:
         logger.error(f"Error getting status: {e}")
@@ -440,7 +527,7 @@ async def get_status():
 
 @app.get("/api/v1/heartbeat", response_model=MessageResponse)
 @app.post("/api/v1/heartbeat", response_model=MessageResponse)
-async def receive_heartbeat(request: Request):
+async def receive_heartbeat(request: Request) -> MessageResponse:
     """
     Receive heartbeat signal from VM guest.
 
@@ -473,7 +560,7 @@ async def receive_heartbeat(request: Request):
 
 @app.get("/api/v1/vm/start", response_model=MessageResponse)
 @app.post("/api/v1/vm/start", response_model=MessageResponse)
-async def start_vm(request: Request):
+async def start_vm(request: Request) -> MessageResponse:
     """Start VM by reverting to snapshot. Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
@@ -499,7 +586,7 @@ async def start_vm(request: Request):
         if heartbeat_monitor:
             heartbeat_monitor.reset()
             generation = heartbeat_monitor.generation
-            await asyncio.sleep(config.vm_startup_heartbeat_delay)
+            await asyncio.sleep(_cfg().vm_startup_heartbeat_delay)
             heartbeat_monitor.enable_if_current(generation)
 
         return MessageResponse(
@@ -519,7 +606,7 @@ async def start_vm(request: Request):
 
 @app.get("/api/v1/vm/stop", response_model=MessageResponse)
 @app.post("/api/v1/vm/stop", response_model=MessageResponse)
-async def stop_vm(request: Request):
+async def stop_vm(request: Request) -> MessageResponse:
     """Stop (destroy) VM. Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
@@ -559,8 +646,9 @@ async def stop_vm(request: Request):
 
 @app.get("/api/v1/vm/restart", response_model=MessageResponse)
 @app.post("/api/v1/vm/restart", response_model=MessageResponse)
-async def restart_vm(request: Request):
+async def restart_vm(request: Request) -> MessageResponse:
     """Restart VM by reverting to snapshot. Supports both GET and POST methods."""
+    global _last_guest_restart
     if not vm_manager:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -570,15 +658,24 @@ async def restart_vm(request: Request):
     # Only apply pre-restart hooks for requests from inside the VM network.
     # Admin/system requests from outside are always allowed.
     client_ip = _client_ip(request)
-    from_vm = vm_manager.is_from_vm(client_ip)
-    if from_vm and plugin_registry:
-        reason = plugin_registry.check_pre_restart()
-        if reason:
-            logger.info(f"Restart blocked for VM client {client_ip}: {reason}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=reason,
-            )
+    # Subnet unknown: we cannot prove the caller is not the guest, so treat it as one (the only
+    # loop guard on this endpoint) unless the operator opted into fail-open.
+    if vm_manager.host_liveness:
+        from_vm = False
+    elif vm_manager.ensure_vm_network() is None:
+        from_vm = not bool(config and getattr(config, "guest_guard_fail_open", False))
+    else:
+        from_vm = vm_manager.is_from_vm(client_ip)
+    if from_vm:
+        _rate_limit_guest_restart()
+        if plugin_registry:
+            reason = plugin_registry.check_pre_restart()
+            if reason:
+                logger.info(f"Restart blocked for VM client {client_ip}: {reason}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=reason,
+                )
 
     was_enabled = heartbeat_monitor.enabled if heartbeat_monitor else False
     try:
@@ -587,7 +684,7 @@ async def restart_vm(request: Request):
             heartbeat_monitor.disable()
 
         loop = asyncio.get_running_loop()
-        wait_for_ready = config.check_qemu_agent
+        wait_for_ready = _cfg().check_qemu_agent
         success = await loop.run_in_executor(None, vm_manager.restart_vm, wait_for_ready)
 
         # restart_vm(wait_for_ready=True) returns False when the guest never becomes QEMU-agent
@@ -603,6 +700,9 @@ async def restart_vm(request: Request):
                 detail="VM restart did not reach a ready state",
             )
 
+        if from_vm:
+            _last_guest_restart = time.monotonic()
+
         # Run post-restart hooks
         if plugin_registry:
             plugin_registry.run_post_restart()
@@ -612,7 +712,7 @@ async def restart_vm(request: Request):
             # Wait for VM to boot before re-enabling; gate the re-arm on the generation token so an
             # operator /vm/stop during the boot delay is not silently overridden.
             generation = heartbeat_monitor.generation
-            await asyncio.sleep(config.vm_startup_heartbeat_delay)
+            await asyncio.sleep(_cfg().vm_startup_heartbeat_delay)
             heartbeat_monitor.enable_if_current(generation)
 
         return MessageResponse(
@@ -633,7 +733,7 @@ async def restart_vm(request: Request):
 
 
 @app.get("/api/v1/snapshots", response_model=SnapshotListResponse)
-async def list_snapshots():
+async def list_snapshots() -> SnapshotListResponse:
     """List all snapshots for the VM."""
     if not vm_manager:
         raise HTTPException(
@@ -659,7 +759,7 @@ async def list_snapshots():
 
 @app.get("/api/v1/snapshot/create", response_model=MessageResponse)
 @app.post("/api/v1/snapshot/create", response_model=MessageResponse)
-async def create_snapshot(request: Request, snapshot_name: Optional[str] = None):
+async def create_snapshot(request: Request, snapshot_name: Optional[str] = None) -> MessageResponse:
     """
     Create a new snapshot (default: create/update the 'ready' snapshot).
 
@@ -694,7 +794,7 @@ async def create_snapshot(request: Request, snapshot_name: Optional[str] = None)
 
 @app.get("/api/v1/snapshot/delete/{snapshot_name}", response_model=MessageResponse)
 @app.delete("/api/v1/snapshot/{snapshot_name}", response_model=MessageResponse)
-async def delete_snapshot(request: Request, snapshot_name: str):
+async def delete_snapshot(request: Request, snapshot_name: str) -> MessageResponse:
     """
     Delete a snapshot.
 
@@ -726,7 +826,7 @@ async def delete_snapshot(request: Request, snapshot_name: str):
 
 @app.get("/api/v1/revert/enable", response_model=MessageResponse)
 @app.post("/api/v1/revert/enable", response_model=MessageResponse)
-async def enable_auto_revert(request: Request):
+async def enable_auto_revert(request: Request) -> MessageResponse:
     """Enable automatic revert on heartbeat timeout. Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
@@ -744,7 +844,7 @@ async def enable_auto_revert(request: Request):
 
 @app.get("/api/v1/revert/disable", response_model=MessageResponse)
 @app.post("/api/v1/revert/disable", response_model=MessageResponse)
-async def disable_auto_revert(request: Request):
+async def disable_auto_revert(request: Request) -> MessageResponse:
     """Disable automatic revert (for maintenance). Supports both GET and POST methods."""
     if not vm_manager:
         raise HTTPException(
@@ -761,7 +861,7 @@ async def disable_auto_revert(request: Request):
 
 
 @app.get("/api/v1/heartbeat/status", response_model=dict)
-async def get_heartbeat_status():
+async def get_heartbeat_status() -> dict[str, object]:
     """Get detailed heartbeat monitoring status."""
     if not heartbeat_monitor:
         raise HTTPException(
@@ -778,7 +878,7 @@ async def get_heartbeat_status():
 
 
 @app.get("/api/v1/state")
-async def get_plugin_state():
+async def get_plugin_state() -> JSONResponse:
     """Aggregated state from all plugins."""
     if not plugin_registry:
         return JSONResponse({})
@@ -786,7 +886,7 @@ async def get_plugin_state():
 
 
 @app.get("/api/v1/events")
-async def sse_events(request: Request):
+async def sse_events(request: Request) -> StreamingResponse:
     """Server-Sent Events stream. Plugins push events into this."""
     if not plugin_registry:
         raise HTTPException(
@@ -796,7 +896,7 @@ async def sse_events(request: Request):
 
     queue = plugin_registry.sse_connect()
 
-    async def event_generator():
+    async def event_generator() -> AsyncIterator[str]:
         try:
             while True:
                 if await request.is_disconnected():
@@ -821,8 +921,11 @@ async def sse_events(request: Request):
 
 
 @app.get("/api/v1/poll/{resource}")
-async def poll_resource(resource: str):
-    """Poll current state of a resource. Returns plain text for AutoIt compatibility."""
+def poll_resource(resource: str) -> PlainTextResponse:
+    """Poll current state of a resource. Returns plain text for AutoIt compatibility.
+
+    Plain ``def``: a shell hook may block up to 5 s, so this runs on the thread pool, not on
+    the event loop that serves heartbeats and the monitor."""
     if not plugin_registry:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Plugin system not initialized"
@@ -831,8 +934,10 @@ async def poll_resource(resource: str):
 
 
 @app.get("/api/v1/signal/{event}")
-async def signal_event(event: str, value: str = ""):
-    """Receive signal from guest (fire-and-forget). Dispatches to plugin handlers."""
+def signal_event(event: str, value: str = "") -> PlainTextResponse:
+    """Receive signal from guest (fire-and-forget). Dispatches to plugin handlers.
+
+    Plain ``def`` for the same reason as poll_resource; push_event handles the cross-thread hop."""
     if not plugin_registry:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Plugin system not initialized"
@@ -843,7 +948,7 @@ async def signal_event(event: str, value: str = ""):
 
 @app.get("/api/v1/poll/{resource}/set")
 @app.post("/api/v1/poll/{resource}/set")
-async def set_poll_value(resource: str, value: str):
+async def set_poll_value(resource: str, value: str) -> MessageResponse:
     """Set poll value for external systems (e.g., Arduino controllers)."""
     if not plugin_registry:
         raise HTTPException(
@@ -859,7 +964,7 @@ async def set_poll_value(resource: str, value: str):
 
 
 @app.get("/{path:path}")
-async def serve_plugin_content(path: str):
+async def serve_plugin_content(path: str) -> object:
     """Serve plugin web content. Falls through to 404 if no plugin handles it."""
     if plugin_registry:
         response = plugin_registry.serve_web(path)
@@ -868,7 +973,7 @@ async def serve_plugin_content(path: str):
     raise HTTPException(status_code=404, detail="Not found")
 
 
-def main():
+def main() -> None:
     """Main entry point for running the API server."""
     global config_path
 
@@ -889,7 +994,7 @@ def main():
     if config_path.exists():
         cfg = Config.from_yaml(config_path)
     else:
-        cfg = Config()
+        cfg = Config()  # type: ignore[call-arg]  # see lifespan(): env-sourced vm_name
 
     cfg.configure_logging()
 

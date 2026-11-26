@@ -1,9 +1,40 @@
-# This repo has no build/test CI of its own; the only job tells the vmctl superproject
-# to bump its pointer to this repo's new main (so the superproject auto-tracks main).
-# A pipeline can't consist solely of a .post job, so this runs in a normal stage.
-# Needs SUPERPROJECT_TRIGGER_TOKEN (masked CI var).
+# exhibition-vm-controller — a check gate, then the superproject pointer bump.
+#
+# This repo ran with NO test CI until 2026-09-09, and it shows in what that gate found on its
+# first day: ruff had been configured under a key it stopped reading in 0.2 (so it linted with
+# defaults for two years), mypy's disallow_untyped_defs was aspirational, and the pinned tooling
+# was two to three majors behind — pytest 7, mypy 1, ruff 0.1, fastapi 0.109. A repo nothing
+# checks is a repo that drifts, and this one deploys onto gallery machines.
+stages:
+  - check
+  - notify
+
+check:
+  stage: check
+  image: $CI_REGISTRY/dockerhub-cache/library/python:3.14
+  before_script:
+    - pip install --no-cache-dir --quiet poetry==2.4.1
+    # host-controller declares a sibling path-dep on ../../vmctl-core; clone it where the
+    # pyproject expects it (evmc is on vmctl-core's CI job-token allowlist, as rvmc is).
+    - git clone -q "https://gitlab-ci-token:${CI_JOB_TOKEN}@git.zkm.de/MuTech/conservation/vmctl/vmctl-core.git" "$CI_PROJECT_DIR/../vmctl-core"
+  script:
+    - cd host-controller
+    - poetry check --lock          # dependency-solve gate: a stale lock fails HERE, not on a host
+    - poetry install --no-interaction
+    - poetry run ruff check .
+    - poetry run ruff format --check .
+    - poetry run mypy vm_controller
+    - poetry run pytest
+    - poetry run pytest ../tests/test_no_real_names.py   # repo-wide name guard (lives outside host-controller)
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# On main only (post-merge, after `check` passes): tell the vmctl superproject to bump its
+# pointer to this commit. Needs SUPERPROJECT_TRIGGER_TOKEN (masked CI var).
 update-superproject:
-  image: curlimages/curl:latest
+  stage: notify
+  image: curlimages/curl:latest@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   script:

@@ -32,19 +32,9 @@ Currently, the API has no authentication. It is designed for use in isolated exh
 
 #### GET /
 
-Get API information and version.
+There is no dedicated root endpoint. `/` falls through to the plugin web-content catch-all (see [Plugin System](#plugin-system)) and returns 404 when no plugin serves it. The web interface is mounted at `/ui` when the `static` directory exists.
 
-**Response**:
-```json
-{
-  "message": "Exhibition VM Controller API",
-  "details": {
-    "version": "1.3.1",
-    "documentation": "/docs",
-    "status": "/api/v1/status"
-  }
-}
-```
+The API version is reported in the OpenAPI schema (`info.version` in `/openapi.json`). The package version is `2.1.0` (`host-controller/pyproject.toml`).
 
 ---
 
@@ -393,6 +383,108 @@ Disable automatic snapshot revert. Use for maintenance or manual control.
 
 ---
 
+### Plugin System
+
+These endpoints return `503 Service Unavailable` when the plugin system is not initialized (except `/api/v1/state`, which then returns `{}`).
+
+#### GET /api/v1/state
+
+Aggregated state from all plugins, as a JSON object.
+
+---
+
+#### GET /api/v1/events
+
+Server-Sent Events stream (`text/event-stream`). Plugins push events into it; each message has an `event:` and a `data:` line. A `: keepalive` comment is sent after 30 seconds without events.
+
+```bash
+curl -N http://localhost:8000/api/v1/events
+```
+
+---
+
+#### GET /api/v1/poll/{resource}
+
+Current value of a resource as plain text (AutoIt compatible). Lookup order: Python poll provider, last value set via `/set`, shell hook `hooks/polls/<resource>.sh`, otherwise `none`.
+
+**Parameters**:
+- `resource` (path): resource name
+
+---
+
+#### GET|POST /api/v1/poll/{resource}/set
+
+Set the poll value of a resource for external systems (e.g., Arduino controllers).
+
+**Parameters**:
+- `resource` (path): resource name
+- `value` (query, required): new value
+
+**Response**:
+```json
+{
+  "message": "Poll value 'RESOURCE' set to 'VALUE'",
+  "details": null
+}
+```
+
+---
+
+#### GET /api/v1/signal/{event}
+
+Fire-and-forget signal from the guest. Dispatches to a Python plugin handler, otherwise to the shell hook `hooks/signals/<event>.sh` (called with `value` as argument). Returns plain text `ok`.
+
+**Parameters**:
+- `event` (path): event name
+- `value` (query, optional): event value, default empty
+
+---
+
+#### GET /{path}
+
+Catch-all for plugin web content. Returns 404 when no plugin serves the path.
+
+---
+
+### Catalog Service
+
+The catalog is a separate service (`evmctl-catalog`, `vm_controller/catalog.py`), configured via `VMCTL_CATALOG_*` environment variables. Default port: `8090`.
+
+#### GET /
+
+HTML page listing all promoted bundles on the shared drives.
+
+---
+
+#### GET /api/v1/catalog
+
+List every promoted bundle under `drives_root`.
+
+**Parameters**:
+- `deep` (query, optional): re-hash each bundle (verify + size), slower; default `false`
+
+---
+
+#### GET /api/v1/catalog/{project}/{bundle}
+
+Detail of one bundle.
+
+**Parameters**:
+- `project` (path): project name
+- `bundle` (path): bundle name
+
+---
+
+#### GET /api/v1/catalog/{project}/{bundle}/download.zip
+
+Download the bundle as one self-contained zip. Returns `409` when the bundle fails verification or cannot be packed.
+
+**Parameters**:
+- `project` (path): project name
+- `bundle` (path): bundle name
+
+---
+
 ## Error Responses
 
 All endpoints may return standard HTTP error codes:
@@ -527,7 +619,7 @@ if __name__ == "__main__":
 
 ## WebSocket Support
 
-Currently not implemented. Future versions may add WebSocket support for real-time status updates and event streaming.
+Not implemented. Event streaming is available as Server-Sent Events via [`GET /api/v1/events`](#get-apiv1events).
 
 ---
 

@@ -1,17 +1,22 @@
 """evmc-import: turn a baked artwork zip into a defined libvirt VM on the host."""
 
+import json
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
 from vmctl_core import promotion
+from vmctl_core.backends import ProcessBackend, ProcessSpec
 
+from vm_controller.config import Config
 from vm_controller.importer import (
     BundleImportError,
     ImportConfig,
     _rewrite_domain,
     import_bundle,
+    main,
 )
 
 _needs_qemu = pytest.mark.skipif(shutil.which("qemu-img") is None, reason="qemu-img not installed")
@@ -203,6 +208,24 @@ def test_rewrite_domain_macos_multidisk_preserves_firmware():
 # --- full import --------------------------------------------------------------
 
 
+def _verbs(calls):
+    """virsh verbs from a FakeRunner's calls, with the `-c <uri>` connection flag stripped.
+
+    Every virsh the importer runs is pinned to the configured libvirt (see importer._virsh), so
+    the verb is no longer at a fixed index. Tests care about WHICH command ran, not where the
+    flag sits — and `_uris` below covers the flag itself."""
+    out = []
+    for c in calls:
+        rest = c[3:] if c[:2] == ["virsh", "-c"] else c[1:]
+        out.append((c[0], rest[0]) if rest else (c[0],))
+    return out
+
+
+def _uris(calls):
+    """The libvirt URI every virsh call was pinned to."""
+    return {c[2] for c in calls if c[:2] == ["virsh", "-c"]}
+
+
 @_needs_qemu
 def test_import_materializes_everything(tmp_path):
     zpath = _baked_zip(tmp_path)
@@ -220,8 +243,11 @@ def test_import_materializes_everything(tmp_path):
     ).stdout
     assert "backing file" not in info
     # domain defined + snapshot created via libvirt
-    assert ["virsh", "define", str(inst / "domain.xml")] in runner.calls
-    assert any(c[:2] == ["virsh", "snapshot-create-as"] and "CYF-Work" in c for c in runner.calls)
+    assert ["virsh", "-c", cfg.libvirt_uri, "define", str(inst / "domain.xml")] in runner.calls
+    assert any(("virsh", "snapshot-create-as") == v for v in _verbs(runner.calls))
+    # every virsh goes to the libvirt the RUNTIME will look in — without -c, a non-root service
+    # user defines into qemu:///session and the runtime never finds the domain (seen on the lab box)
+    assert _uris(runner.calls) == {"qemu:///system"}
     # domain xml points at the local disk, not the rvmc overlay
     dxml = (inst / "domain.xml").read_text()
     assert str(inst / "disk.qcow2") in dxml and "overlay.qcow2" not in dxml
@@ -267,13 +293,16 @@ def test_force_reimport_tears_down_stale_domain(tmp_path):
 
     runner = FakeRunner()
     import_bundle(zpath, cfg, run=runner, force=True)
-    subs = [tuple(c[:2]) for c in runner.calls]
+    subs = _verbs(runner.calls)
 
     assert ("virsh", "undefine") in subs
     assert ("virsh", "snapshot-delete") in subs
     assert ("virsh", "destroy") in subs
     # teardown happens before the domain is (re)defined
     assert subs.index(("virsh", "undefine")) < subs.index(("virsh", "define"))
+    # ...and it tears down in the SAME libvirt it defines into. A teardown on the wrong URI
+    # "succeeds" against a domain that is not the one on the wall, best-effort and silent.
+    assert _uris(runner.calls) == {"qemu:///system"}
 
 
 @_needs_qemu
@@ -286,7 +315,7 @@ def test_import_fails_closed_when_ready_snapshot_cannot_be_created(tmp_path):
     class _SnapFails(FakeRunner):
         def __call__(self, cmd):
             self.calls.append(cmd)
-            if cmd[:2] == ["virsh", "snapshot-create-as"]:
+            if _verbs([cmd]) == [("virsh", "snapshot-create-as")]:
                 raise subprocess.CalledProcessError(1, cmd, output="", stderr="no space")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -422,7 +451,7 @@ def test_import_macos_multidisk(tmp_path):
     assert "OVMF" in dxml
     # OVMF isn't on this test host -> surfaced as a host-prereq note
     assert any("OVMF" in n for n in summary.get("notes", []))
-    assert ["virsh", "define", str(inst / "domain.xml")] in runner.calls
+    assert ["virsh", "-c", cfg.libvirt_uri, "define", str(inst / "domain.xml")] in runner.calls
 
 
 @_needs_qemu
@@ -440,3 +469,285 @@ def test_import_refuses_tampered_bundle(tmp_path):
             zout.writestr(it, data)
     with pytest.raises(BundleImportError, match="verification"):
         import_bundle(tampered, cfg=_cfg(tmp_path), run=FakeRunner())
+
+
+# --- bundle-supplied plugin.id is a path (2026-09-08 sweep) -------------------
+
+
+def _plan_with_plugin_id(tmp_path: Path, plugin_id):
+    """A minimal bundle root on disk with the given plugin.id, planned (not installed)."""
+    from vm_controller.importer import plan_import
+
+    root = tmp_path / "work-1.0"
+    (root / "plugin").mkdir(parents=True)
+    (root / "plugin" / "plugin.py").write_text("def setup(r): pass\n")
+    promotion.write_yaml(
+        root / promotion.BUNDLE_YAML,
+        {
+            "bundle_format": promotion.BUNDLE_FORMAT,
+            "plugin": {"id": plugin_id, "version": "1.0.0", "name": "Work"},
+            "artwork": {"id": "work"},
+        },
+    )
+    return plan_import(root, _cfg(tmp_path))
+
+
+def test_plugin_id_must_be_a_bare_segment(tmp_path):
+    """plan_import feeds plugin.id into a directory that install then rmtree's, as root.
+    verify_bundle cannot catch a tampered id — the submitter writes CHECKSUMS too."""
+    for hostile in ("/etc", "../../../../etc/cron.d", "..", "a/b"):
+        with pytest.raises(BundleImportError, match="bare path segment"):
+            _plan_with_plugin_id(tmp_path / f"case-{abs(hash(hostile))}", hostile)
+
+
+def test_a_normal_plugin_id_still_plans(tmp_path):
+    plan = _plan_with_plugin_id(tmp_path, "work")
+    assert plan.plugin_dir is not None
+    assert plan.plugin_dir.name == "work"
+
+
+# --- a failed force-import must not take the previous exhibit's disk with it ---
+
+
+@_needs_qemu
+def test_force_import_restores_the_previous_install_when_the_import_fails(tmp_path):
+    """The old sequence destroyed first and copied second, so the likeliest failure — no room
+    for the new disk — landed after the running exhibit's image was already deleted. Disks are
+    staged beside the old install now, and a failure after the swap puts the old one back."""
+    zpath = _baked_zip(tmp_path)
+    cfg = _cfg(tmp_path)
+
+    first = import_bundle(zpath, cfg, run=FakeRunner())
+    assert first["imported"] is True
+    install = Path(first["install_dir"])
+    marker = (install / "disk.qcow2").read_bytes()
+    (install / "witness").write_text("the exhibit that was already here")
+
+    class FailingDefine(FakeRunner):
+        def __call__(self, cmd):
+            self.calls.append(cmd)
+            if "define" in cmd:
+                raise subprocess.CalledProcessError(1, cmd, "", "libvirt says no")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        import_bundle(zpath, cfg, run=FailingDefine(), force=True)
+
+    assert install.is_dir(), "the previous install was not restored"
+    assert (install / "witness").read_text() == "the exhibit that was already here"
+    assert (install / "disk.qcow2").read_bytes() == marker
+    assert not install.with_name(install.name + ".replaced").exists()
+    assert not install.with_name(install.name + ".incoming").exists()
+
+
+@_needs_qemu
+def test_import_and_runtime_agree_on_which_libvirt(tmp_path):
+    """The importer's default libvirt MUST be the runtime controller's default.
+
+    These are two halves of one system that never talk to each other: the importer defines a
+    domain, the runtime starts it by name. If their URIs differ, nothing errors — the import
+    reports success, and the runtime reports "failed to get domain" about a domain that exists,
+    in the other libvirt. That is what happened on the lab box: the import landed in
+    qemu:///session while every artwork on that host lives in qemu:///system."""
+    import inspect
+
+    from vm_controller.vm_manager import VMManager
+
+    runtime_default = inspect.signature(VMManager.__init__).parameters["uri"].default
+    assert ImportConfig(_env_file=None).libvirt_uri == runtime_default
+
+
+@pytest.fixture
+def process_zip(tmp_path, monkeypatch):
+    def forbid(*args, **kwargs):
+        raise AssertionError(f"unexpected shell-out: {args}")
+
+    monkeypatch.setattr(subprocess, "run", forbid)
+    instance = tmp_path / "source"
+    (instance / "images").mkdir(parents=True)
+    (instance / "images" / "disk.img").write_bytes(b"pristine")
+    media = instance / "emulator.sh"
+    media.write_text("#!/bin/sh\nexec sleep 60\n")
+    media.chmod(0o755)
+    spec = ProcessSpec(
+        argv=["../emulator.sh"],
+        cwd="work",
+        images=["images/disk.img"],
+        media={"emulator.sh": str(media)},
+        media_sha256={"emulator.sh": promotion.sha256_file(media)},
+    )
+    (instance / "process.json").write_text(spec.model_dump_json())
+    bundle = promotion.create_process_bundle(instance, tmp_path / "process-1.0", provenance={})
+    promotion.unseal_bundle(bundle)
+    (bundle / "config").mkdir()
+    promotion.write_yaml(
+        bundle / "config" / "exhibition.config.yaml",
+        {"vm_name": "Emulator", "heartbeat_timeout": 1, "api_host": "0.0.0.0"},
+    )
+    promotion.write_checksums(bundle)
+    zpath = tmp_path / "process.zip"
+    promotion.pack_bundle_zip(bundle, zpath)
+    return zpath
+
+
+@pytest.mark.parametrize("with_plugin", [False, True])
+def test_process_import_materializes_instance_and_baseline(tmp_path, process_zip, with_plugin):
+    if with_plugin:
+        bundle = tmp_path / "process-1.0"
+        (bundle / "plugin").mkdir()
+        (bundle / "plugin" / "plugin.py").write_text("def setup(r): pass\n")
+        manifest = promotion.read_yaml(bundle / promotion.BUNDLE_YAML)
+        manifest["plugin"] = {"id": "emulator"}
+        promotion.write_yaml(bundle / promotion.BUNDLE_YAML, manifest)
+        promotion.write_checksums(bundle)
+        promotion.pack_bundle_zip(bundle, process_zip)
+    cfg = _cfg(tmp_path)
+    runner = FakeRunner()
+    summary = import_bundle(process_zip, cfg, run=runner)
+    assert summary["imported"] is True
+    assert summary["commands"] == runner.calls == []
+    install = Path(summary["install_dir"])
+    assert install == Path(cfg.install_root) / "process-1.0"
+    assert not (install / "domain.xml").exists()
+    assert (install / "work").is_dir()
+    assert (install / "emulator.sh").stat().st_mode & 0o111
+    assert (install / "images" / "disk.img").read_bytes() == b"pristine"
+    backend = ProcessBackend("Emulator", instance_dir=install)
+    assert backend.snapshot_list() == ["ready"]
+    (install / "images" / "disk.img").write_bytes(b"changed")
+    backend.snapshot_revert("ready")
+    assert (install / "images" / "disk.img").read_bytes() == b"pristine"
+    written = Config.from_yaml(Path(summary["config_path"]))
+    assert written.backend == "process"
+    assert written.process_dir == str(install.resolve())
+    assert written.vm_name == "Emulator"
+    assert written.snapshot_name == "ready"
+    assert written.api_host == "127.0.0.1"
+    assert written.heartbeat_timeout == 30
+    assert written.vm_startup_heartbeat_delay == 120
+    assert (Path(cfg.plugins_dir) / "emulator" / "plugin.py").is_file() == with_plugin
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        {"kind": "amiga", "kickstart": "roms/kick.rom", "expect": ["SYS:Art"], "max_age_s": 17.5},
+        {"kind": "mac68k", "ram_bytes": 8388608, "expect": ["ArtWork"], "max_age_s": 23},
+    ],
+)
+def test_process_import_preserves_probe_settings_verbatim(tmp_path, process_zip, probe):
+    bundle = tmp_path / "process-1.0"
+    definition = bundle / "vm" / "process.json"
+    spec = json.loads(definition.read_text())
+    spec["probe"] = probe
+    definition.write_text(json.dumps(spec, indent=3) + "\n")
+    promotion.write_checksums(bundle)
+    promotion.pack_bundle_zip(bundle, process_zip)
+
+    summary = import_bundle(process_zip, _cfg(tmp_path))
+    install = Path(summary["install_dir"])
+    assert (install / "process.json").read_bytes() == definition.read_bytes()
+    assert json.loads((install / "process.json").read_text())["probe"] == probe
+    backend = ProcessBackend("Emulator", instance_dir=install)
+    assert backend.spec.probe is not None
+    assert backend.spec.probe.model_dump(include=set(probe)) == probe
+
+
+def test_process_import_refuses_existing_without_stopping(tmp_path, process_zip):
+    cfg = _cfg(tmp_path)
+    summary = import_bundle(process_zip, cfg)
+    backend = ProcessBackend("Emulator", instance_dir=summary["install_dir"])
+    backend.start()
+    try:
+        with pytest.raises(BundleImportError, match="already exists"):
+            import_bundle(process_zip, cfg)
+        assert backend.is_running()
+    finally:
+        backend.stop()
+
+
+def test_process_force_reimport_stops_before_replacing(tmp_path, process_zip, monkeypatch):
+    cfg = _cfg(tmp_path)
+    summary = import_bundle(process_zip, cfg)
+    install = Path(summary["install_dir"])
+    backend = ProcessBackend("Emulator", instance_dir=install)
+    (install / "witness").write_text("old instance")
+    (install / "images" / "disk.img").write_bytes(b"changed")
+    backend.start()
+    stop = ProcessBackend.stop
+    stopped = []
+
+    def checked_stop(self):
+        assert self.instance_dir == install
+        assert (install / "witness").is_file()
+        assert self.is_running()
+        stop(self)
+        assert not self.is_running()
+        stopped.append(True)
+
+    monkeypatch.setattr(ProcessBackend, "stop", checked_stop)
+    try:
+        assert import_bundle(process_zip, cfg, force=True)["imported"]
+        assert stopped == [True]
+        assert not backend.is_running()
+        assert not (install / "witness").exists()
+        assert (install / "images" / "disk.img").read_bytes() == b"pristine"
+        assert backend.snapshot_list() == ["ready"]
+        assert not install.with_name(install.name + ".incoming").exists()
+        assert not install.with_name(install.name + ".replaced").exists()
+    finally:
+        stop(backend)
+
+
+def test_process_import_refuses_tampered_bundle(tmp_path, process_zip):
+    bad = tmp_path / "bad.zip"
+    with zipfile.ZipFile(process_zip) as zin, zipfile.ZipFile(bad, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename.endswith("disk.img"):
+                data += b"tampered"
+            zout.writestr(item, data)
+    cfg = _cfg(tmp_path)
+    with pytest.raises(BundleImportError, match="verification"):
+        import_bundle(bad, cfg)
+    assert not Path(cfg.install_root).exists()
+    assert not Path(cfg.config_dir).exists()
+
+
+def test_process_import_dry_run(tmp_path, process_zip):
+    cfg = _cfg(tmp_path)
+    summary = import_bundle(process_zip, cfg, dry_run=True)
+    assert summary["planned"]
+    assert summary["commands"] == []
+    assert not Path(cfg.install_root).exists()
+    assert not Path(cfg.config_dir).exists()
+
+
+def test_process_snapshot_failure_keeps_running_install(tmp_path, process_zip, monkeypatch):
+    cfg = _cfg(tmp_path)
+    summary = import_bundle(process_zip, cfg)
+    backend = ProcessBackend("Emulator", instance_dir=summary["install_dir"])
+    backend.start()
+
+    def fail_snapshot(self, name):
+        raise OSError("no space")
+
+    monkeypatch.setattr(ProcessBackend, "snapshot_create", fail_snapshot)
+    try:
+        with pytest.raises(OSError, match="no space"):
+            import_bundle(process_zip, cfg, force=True)
+        assert backend.is_running()
+        assert backend.snapshot_list() == ["ready"]
+        install = backend.instance_dir
+        assert not install.with_name(install.name + ".incoming").exists()
+    finally:
+        backend.stop()
+
+
+def test_process_cli_startup_delay(tmp_path, process_zip, monkeypatch):
+    cfg = _cfg(tmp_path)
+    for name in ("install_root", "config_dir", "plugins_dir", "archive_dir"):
+        monkeypatch.setenv(f"VMCTL_IMPORT_{name.upper()}", getattr(cfg, name))
+    assert main([str(process_zip), "--vm-startup-heartbeat-delay", "180"]) == 0
+    written = Config.from_yaml(Path(cfg.config_dir) / "process-1.0.yaml")
+    assert written.vm_startup_heartbeat_delay == 180

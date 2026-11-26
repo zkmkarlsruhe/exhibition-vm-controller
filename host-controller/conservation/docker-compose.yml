@@ -7,7 +7,7 @@
 #   docker compose build
 #   docker compose up proxy                 # mitmproxy archive server on :8080
 #   docker compose run --rm tools mcp "CYF-Example"        # MCP over stdio
-#   docker compose run --rm tools capture "CYF-Subfusion" -s 120
+#   docker compose run --rm tools capture "CYF-Example" -s 120
 #   docker compose run --rm tools install-ca --vm "CYF-Example"
 
 x-common: &common
@@ -23,7 +23,7 @@ x-common: &common
     - ./proxy/archive:/archive            # served/recorded content
     - ./proxy/ca:/cadir                   # mitmproxy CA (persisted)
   # NOTE: `capture` needs tcpdump's privileges — run it as root:
-  #   docker compose run --rm --user 0 tools capture "CYF-Subfusion" -s 120
+  #   docker compose run --rm --user 0 tools capture "CYF-Example" -s 120
 
 services:
   proxy:
@@ -52,10 +52,12 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: nginxinc/nginx-unprivileged:stable   # runs as non-root, listens :8080
+    image: nginxinc/nginx-unprivileged:stable@sha256:ec0f7ecb1fbd84959ac114e65fb36074ffc97d4d51db0f18ee925162d889dcef   # runs as non-root, listens :8080
     networks: [cons]
     ports: ["${CONS_FRONT_IP:-192.168.122.1}:80:8080"]   # daemon binds VM-net IP only
     extra_hosts: ["host.docker.internal:host-gateway"]   # reach the host controller
+    # The controller then sees this container's bridge-gateway IP as the peer: add it to the
+    # controller's `trusted_proxies` or X-Real-IP is ignored (README: Front door in Docker).
     volumes: ["./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro"]
     depends_on: [archive]
     restart: unless-stopped

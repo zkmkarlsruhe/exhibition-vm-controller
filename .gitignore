@@ -31,7 +31,8 @@ env/
 .venv
 
 # Poetry
-poetry.lock
+# poetry.lock IS committed (as in every other repo of the family): this is an application that
+# gets deployed onto exhibition hosts, so CI and those hosts must install the same resolved set.
 
 # Configuration files (contain sensitive VM names, etc.)
 host-controller/config.yaml

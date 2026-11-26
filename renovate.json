@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "description": [
+    "Auto-merge for patch+minor (stable, >=1.0.0, 3-day age) is enabled fleet-wide from the global config; gitops/* repos are auto-patch only (minor stays a reviewed MR). No per-repo preset needed."
+  ],
+  "registryAliases": {
+    "docker.io": "harbor.zkm.de/dockerhub-cache"
+  },
+  "packageRules": [
+    {
+      "description": "Do NOT bump the legacy in-guest agent's Go version. It cross-compiles to a windows/386 exe that must run on Windows XP, and only the Go 1.10.x toolchain still stamps PE MinSubsystemVersion 4.0 — every Go >= 1.11 stamps 6.1 and XP's loader rejects the binary outright ('Exec format error', verified on a real XP guest). go/build.sh asserts this and fails the build, so a bumped toolchain does not silently ship a dud; it just makes the agent unbuildable. See conservation/guest_agent/README.md.",
+      "matchManagers": ["gomod"],
+      "enabled": false
+    },
+    {
+      "description": "The Python floor stays at ^3.11 — the version vmctl-core requires — not whatever is newest. This controller is installed onto exhibition machines whose OS is chosen by what the artwork needs, not by what upstream Python supports; raising the floor to a just-released interpreter would strand a gallery host that ships an older one. CI runs the newest Python regardless, so we still learn about breakage early.",
+      "matchManagers": ["poetry"],
+      "matchDepNames": ["python"],
+      "enabled": false
+    }
+  ]
+}

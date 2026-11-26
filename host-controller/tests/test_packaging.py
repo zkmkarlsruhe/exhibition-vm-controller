@@ -24,3 +24,11 @@ def test_console_scripts_target_the_declared_package():
     assert scripts
     for name, target in scripts.items():
         assert target.startswith("vm_controller."), f"{name} -> {target}"
+
+
+def test_api_and_package_report_the_same_version():
+    import vm_controller
+    import vm_controller.api as api
+
+    cfg = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    assert api.app.version == vm_controller.__version__ == cfg["tool"]["poetry"]["version"]

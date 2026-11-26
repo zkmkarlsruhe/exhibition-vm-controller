@@ -23,6 +23,8 @@ def _req(ip: str):
 
 
 class _FakeVM:
+    host_liveness = False
+
     def __init__(self, network):
         self._network = network
 
@@ -90,11 +92,10 @@ def test_every_virsh_call_passes_a_timeout(monkeypatch):
         calls.append({"cmd": cmd, "timeout": kw.get("timeout")})
         # snapshot-list must report the 'ready' snapshot so start_vm() takes the revert path
         # (start_vm now fails CLOSED with no ready snapshot instead of a plain `virsh start`).
-        out = (
-            "ready\n"
-            if isinstance(cmd, list) and cmd[:2] == ["virsh", "snapshot-list"]
-            else "running\n"
-        )
+        # `snapshot-list` now arrives via vmctl_core's backend as
+        # `virsh -c <uri> snapshot-list <vm> --name`, so match on the subcommand, not on
+        # the argv prefix; start_vm() must still find 'ready' and take the revert path.
+        out = "ready\n" if isinstance(cmd, list) and "snapshot-list" in cmd else "running\n"
         return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
     monkeypatch.setattr(subprocess, "run", recording_run)
@@ -111,3 +112,98 @@ def test_every_virsh_call_passes_a_timeout(monkeypatch):
     assert virsh_calls, "expected virsh calls to have been recorded"
     missing = [c["cmd"] for c in virsh_calls if c["timeout"] is None]
     assert not missing, f"virsh calls WITHOUT a timeout (can wedge _op_lock): {missing}"
+
+
+def test_every_virsh_call_targets_the_configured_uri(monkeypatch):
+    """Direct shell-outs must name the SAME libvirt the shared backend talks to.
+
+    VMManager delegates most operations to vmctl_core's LibvirtBackend, which always passes
+    `-c <uri>`, but the staged golden-snapshot refresh and the USB/XML plumbing still shell out
+    themselves. A bare `virsh` there falls back to the caller's default URI — qemu:///session
+    for a non-root service user — where the domain does not exist, so a snapshot refresh dies
+    with "failed to get domain" while every delegated call on the same object works. Found on a
+    real libvirt host, invisible to a mocked test that never looks at the connection.
+    """
+    calls: list[list] = []
+
+    def recording_run(cmd, *a, **kw):
+        calls.append(cmd)
+        # report both names so the staged refresh gets past its verification step
+        out = (
+            "ready\nready__staging\n"
+            if isinstance(cmd, list) and "snapshot-list" in cmd
+            else "running\n"
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", recording_run)
+
+    vm = VMManager(vm_name="testvm", uri="qemu:///system")
+    calls.clear()
+
+    vm.get_vm_state()
+    vm.list_snapshots()
+    vm.create_snapshot("ready")
+    vm.stop_vm()
+
+    virsh_calls = [c for c in calls if isinstance(c, list) and c[:1] == ["virsh"]]
+    assert virsh_calls, "expected virsh calls to have been recorded"
+    unscoped = [c for c in virsh_calls if c[1:3] != ["-c", "qemu:///system"]]
+    assert not unscoped, f"virsh calls that would hit the caller's default URI: {unscoped}"
+
+
+def test_start_vm_boots_after_reverting_an_offline_snapshot(monkeypatch):
+    """A snapshot taken while the VM was off restores it off — start_vm must still deliver a
+    running VM. Reverting is libvirt-correct here, so nothing errors: without the explicit
+    boot the exhibit sits dark behind a "started successfully" log until the heartbeat trips.
+    """
+    calls: list[list] = []
+    running = {"value": False}  # domstate as libvirt would report it after an offline revert
+
+    def recording_run(cmd, *a, **kw):
+        calls.append(cmd)
+        if isinstance(cmd, list) and "start" in cmd:
+            running["value"] = True
+        if isinstance(cmd, list) and "snapshot-list" in cmd:
+            out = "ready\n"
+        elif isinstance(cmd, list) and "domstate" in cmd:
+            out = "running\n" if running["value"] else "shut off\n"
+        else:
+            out = ""
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", recording_run)
+
+    vm = VMManager(vm_name="testvm", uri="qemu:///system")
+    calls.clear()
+    vm.start_vm()
+
+    assert any("snapshot-revert" in c for c in calls if isinstance(c, list)), "expected a revert"
+    assert any("start" in c for c in calls if isinstance(c, list)), (
+        "start_vm returned without booting a VM that the revert left shut off"
+    )
+    assert running["value"]
+
+
+def test_guest_triggered_restarts_are_rate_limited(monkeypatch):
+    """A guest asking to be reset is a feature; a guest asking every second is a loop. The only
+    guard was an OPTIONAL plugin hook, so an exhibit with no such plugin could be driven into a
+    permanent revert cycle by anything running inside it."""
+    from fastapi import HTTPException
+
+    from vm_controller import api
+
+    monkeypatch.setattr(api, "_last_guest_restart", 0.0, raising=False)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(api.time, "monotonic", lambda: clock["t"])
+
+    api._rate_limit_guest_restart()  # first one always passes
+    api._last_guest_restart = clock["t"]  # what restart_vm() stamps after a successful revert
+
+    clock["t"] += 5
+    with pytest.raises(HTTPException) as caught:
+        api._rate_limit_guest_restart()
+    assert caught.value.status_code == 429
+
+    clock["t"] += api.GUEST_RESTART_MIN_INTERVAL_S
+    api._rate_limit_guest_restart()  # far enough apart -> allowed again

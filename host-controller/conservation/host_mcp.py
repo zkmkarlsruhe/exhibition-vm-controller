@@ -33,6 +33,8 @@ import subprocess
 import sys
 import tempfile
 
+from guest_ip import agent_available, resolve_ip
+
 VM = ""
 AGENT_ADDR = None  # (ip, port) or None to auto-resolve
 
@@ -52,14 +54,10 @@ def resolve_agent():
     global AGENT_ADDR
     if AGENT_ADDR:
         return AGENT_ADDR
-    rc, out, _ = virsh("domifaddr", VM, "--source", "agent")
-    for line in out.splitlines():
-        for tok in line.split():
-            if tok.count(".") == 3 and not tok.startswith("127."):
-                ip = tok.split("/")[0]
-                AGENT_ADDR = (ip, 9009)
-                return AGENT_ADDR
-    return None
+    ip = resolve_ip(VM)
+    if ip:
+        AGENT_ADDR = (ip, 9009)
+    return AGENT_ADDR
 
 
 # --------------------------------------------------------------------------
@@ -170,6 +168,12 @@ def h_vm_dumpxml(a):
 
 
 def h_vm_net_info(a):
+    if not agent_available(VM):
+        return {
+            "vm": VM,
+            "interfaces": "no connected qemu-ga channel",
+            "agent_addr": resolve_agent(),
+        }
     rc, out, err = virsh("domifaddr", VM, "--source", "agent")
     return {"vm": VM, "interfaces": out or err, "agent_addr": resolve_agent()}
 

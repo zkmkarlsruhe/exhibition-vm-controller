@@ -15,7 +15,7 @@ This guide walks you through setting up the Exhibition VM Controller from scratc
 ### Software Requirements
 
 **Host Operating System**:
-- Ubuntu 22.04 LTS or Debian 12 (recommended)
+- Ubuntu 24.04 LTS or Debian 12 (recommended; the host controller needs Python 3.11+, Ubuntu 22.04 ships 3.10)
 - Other Linux distributions may work but are untested
 
 **Installation packages**:
@@ -150,7 +150,9 @@ Click **Forward**.
 ### 2.6 Name the VM
 
 - **Name**: Something descriptive (e.g., `my-artwork-vm`)
-- **Network selection**: NAT or Bridge (NAT recommended)
+- **Network selection**: NAT (a libvirt network such as `default`). Bridged is unsupported:
+  the controller reads the guest subnet from the libvirt network, a bridged NIC has none, and
+  every heartbeat is then rejected
 - Check **Customize configuration before install**
 - Click **Finish**
 
@@ -318,7 +320,7 @@ Open Notepad in the VM and type something.
 ### 7.2 Trigger a Manual Revert
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/snapshot/revert
+curl -X POST http://localhost:8000/api/v1/vm/restart
 ```
 
 ### 7.3 Observe the Result

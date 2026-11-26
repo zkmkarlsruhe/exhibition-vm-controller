@@ -18,7 +18,7 @@
 
 ; Host configuration
 Local $host = "192.168.122.1"
-Local $apiUrl = "http://" & $host & ":8000/api/v1/button-status"
+Local $apiUrl = "http://" & $host & ":8000/api/v1/poll/button"
 
 ; Button coordinates (adjust for your application)
 Local $buttonX = @DesktopWidth / 2   ; Center of screen horizontally
@@ -87,9 +87,8 @@ Func CheckButtonStatus()
     Local $response = $oHTTP.ResponseText
     ConsoleWrite("  API Response: " & $response & @CRLF)
 
-    ; Check if response indicates button should be clicked
-    ; Adjust this based on your API response format
-    If StringInStr($response, '"pressed":true') Or StringInStr($response, '"pressed": true') Then
+    ; /api/v1/poll/<resource> answers plain text: "true" / "false" / "none"
+    If StringStripWS($response, 3) = "true" Then
         ConsoleWrite("  API signals: Click button!" & @CRLF)
         Return True
     Else

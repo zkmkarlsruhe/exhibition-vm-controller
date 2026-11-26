@@ -12,10 +12,10 @@ YAML files, environment variables, and validation.
 
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 import yaml
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,16 @@ class Config(BaseSettings):
 
     # VM Configuration
     vm_name: str = Field(description="Name of the VM in libvirt")
+
+    backend: Literal["libvirt", "process"] = Field(
+        default="libvirt",
+        description="'process' runs an emulator from process_dir instead of a libvirt domain",
+    )
+
+    process_dir: str = Field(
+        default="",
+        description="Instance directory holding process.json; required for backend 'process'",
+    )
 
     snapshot_name: str = Field(default="ready", description="Name of the snapshot to revert to")
 
@@ -126,7 +136,9 @@ class Config(BaseSettings):
     api_reload: bool = Field(default=False, description="Enable auto-reload for development")
 
     # Logging Configuration
-    log_level: str = Field(
+    # Literal, not str: a typo used to surface as an AttributeError in configure_logging() and
+    # crash-loop the unit; now it is one validation message at load.
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
         default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
     )
 
@@ -134,6 +146,12 @@ class Config(BaseSettings):
         default="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         description="Log message format",
     )
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _upper_log_level(cls, v: object) -> object:
+        # Configs written before the Literal used lowercase ("info"); keep accepting them.
+        return v.upper() if isinstance(v, str) else v
 
     # Plugin Configuration
     plugins: Optional[List[str]] = Field(

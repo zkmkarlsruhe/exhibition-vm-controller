@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Upload a local file to a VM via QEMU guest agent."""
 
-import json
 import base64
+import json
 import subprocess
 import sys
 

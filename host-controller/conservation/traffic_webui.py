@@ -25,11 +25,10 @@ import subprocess
 import sys
 import tempfile
 
+import capture_traffic as ct
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-
-import capture_traffic as ct
 
 
 class CaptureSession:

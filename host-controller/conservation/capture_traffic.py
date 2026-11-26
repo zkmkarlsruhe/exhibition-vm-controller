@@ -24,7 +24,7 @@ Usage:
     sudo ./capture_traffic.py <vm-name> [--seconds N] [--out FILE] [--iface IF]
 
 Examples:
-    sudo ./capture_traffic.py CYF-Subfusion --seconds 120
+    sudo ./capture_traffic.py CYF-Example --seconds 120
     sudo ./capture_traffic.py "CYF-Example" --out /tmp/capture.pcap
     # or omit --seconds and stop with Ctrl-C; the summary prints on exit
 
@@ -34,13 +34,11 @@ The raw .pcap is always written so you can open it in Wireshark afterwards.
 """
 
 import argparse
-import ipaddress
 import os
 import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import xml.etree.ElementTree as ET
 from collections import Counter
 
@@ -285,7 +283,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("vm_name", help="libvirt VM name (e.g. CYF-Subfusion)")
+    p.add_argument("vm_name", help="libvirt VM name (e.g. CYF-Example)")
     p.add_argument(
         "--seconds", "-s", type=int, default=None, help="capture duration; omit to run until Ctrl-C"
     )

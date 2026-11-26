@@ -7,6 +7,9 @@ template, the exhibition config, the plugin and (optionally) the conservation
 archive. Nothing here needs a golden base or a catalog; that was all resolved at
 bake time.
 
+Process bundles carry a complete emulator instance in ``vm/`` instead. Import
+copies it into place and creates a cold ``ready`` snapshot through ProcessBackend.
+
 Steps (all under one install root, idempotent-ish via ``--force``):
 
   1. unpack + ``verify_bundle`` (re-hash every file; refuse a tampered bundle);
@@ -32,6 +35,7 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -40,6 +44,8 @@ import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from vmctl_core import promotion
+from vmctl_core.backends.process import ProcessBackend, process_path
+from vmctl_core.paths import safe_segment
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +67,22 @@ def _best_effort(run: Runner, cmd: list[str]) -> None:
         logger.info("teardown step skipped (%s): %s", " ".join(cmd), e)
 
 
-def _teardown_domain(run: Runner, vm_name: str, ready_snapshot: str) -> None:
+def _virsh(uri: str, *args: str) -> list[str]:
+    """A virsh argv pinned to ``uri``.
+
+    Without ``-c``, virsh uses the CALLER's default URI: qemu:///system for root, but
+    qemu:///session for any non-root user — a different libvirt, with its own domains. The
+    runtime controller passes ``-c`` everywhere for exactly this reason (see VMManager), and the
+    importer did not, so on a host where evmc runs as a service user the import defined the domain
+    into the session libvirt while the runtime looked for it in the system one. The exhibit then
+    never started, and a forced re-import "tore down" a domain in the session libvirt that was not
+    the one on the wall. Measured on the lab box: `virsh define` landed in qemu:///session while
+    every other artwork lives in qemu:///system.
+    """
+    return ["virsh", "-c", uri, *args]
+
+
+def _teardown_domain(run: Runner, vm_name: str, ready_snapshot: str, uri: str) -> None:
     """Tear down a previously-imported libvirt domain + its snapshots before a force re-import.
 
     Removing only the install dir (disk + xml) leaves the OLD libvirt domain still defined and its
@@ -70,9 +91,9 @@ def _teardown_domain(run: Runner, vm_name: str, ready_snapshot: str) -> None:
     stale snapshot. Destroy (if running), drop the ready snapshot, then undefine with snapshot +
     nvram metadata so the redefine starts from a clean slate. All best-effort: a fresh host where
     the domain was never defined is fine."""
-    _best_effort(run, ["virsh", "destroy", vm_name])
-    _best_effort(run, ["virsh", "snapshot-delete", vm_name, ready_snapshot, "--children"])
-    _best_effort(run, ["virsh", "undefine", vm_name, "--snapshots-metadata", "--nvram"])
+    _best_effort(run, _virsh(uri, "destroy", vm_name))
+    _best_effort(run, _virsh(uri, "snapshot-delete", vm_name, ready_snapshot, "--children"))
+    _best_effort(run, _virsh(uri, "undefine", vm_name, "--snapshots-metadata", "--nvram"))
 
 
 class ImportConfig(BaseSettings):
@@ -96,6 +117,19 @@ class ImportConfig(BaseSettings):
     )
     archive_dir: str = Field(
         default="/var/lib/evmc/archive", description="Conservation archive store root"
+    )
+    libvirt_uri: str = Field(
+        default="qemu:///system",
+        description=(
+            "The libvirt the domain is defined in. MUST be the one the runtime controller "
+            "connects to (VMManager's default is the same string) — see the note on _virsh()"
+        ),
+    )
+    vm_startup_heartbeat_delay: float = Field(
+        default=120,
+        gt=0,
+        allow_inf_nan=False,
+        description="Process emulator startup grace in seconds",
     )
 
 
@@ -202,7 +236,8 @@ def plan_import(bundle_root: Path, cfg: ImportConfig) -> ImportPlan:
     )
 
     install_dir = Path(cfg.install_root) / artwork_id
-    disks = [(rel, install_dir / name) for rel, name in _disk_artifacts(vm)]
+    is_process = vm.get("backend") == "process"
+    disks = [] if is_process else [(rel, install_dir / name) for rel, name in _disk_artifacts(vm)]
     plan = ImportPlan(
         artwork_id=artwork_id,
         vm_name=vm_name,
@@ -219,17 +254,43 @@ def plan_import(bundle_root: Path, cfg: ImportConfig) -> ImportPlan:
     plugin = by.get("plugin") or {}
     pid = plugin.get("id")
     if (bundle_root / "plugin").is_dir() and pid:
+        # plugin.id comes out of the bundle, and the install step rmtree's this directory
+        # before copying into it. Joining an unchecked value would let `id: "/etc"` or
+        # `id: "../../../../etc/cron.d"` aim that rmtree + copytree anywhere the importer can
+        # write — and it runs as root on the exhibition host. verify_bundle cannot help: the
+        # submitter writes CHECKSUMS too, so a tampered bundle verifies fine. Every sibling
+        # value that reaches a path is already guarded this way (artwork_id via
+        # unpack_bundle_zip, the catalog's URL components, core's tool segments); this one
+        # was the gap.
+        try:
+            safe_segment(pid, field="bundle plugin.id")
+        except ValueError as e:
+            raise BundleImportError(str(e)) from e
         plan.plugin_dir = Path(cfg.plugins_dir) / pid
 
     conservation = by.get("conservation") or {}
     if conservation.get("included") and (bundle_root / "conservation" / "archive").is_dir():
         plan.archive_dir = Path(cfg.archive_dir) / artwork_id
 
+    if is_process:
+        try:
+            safe_segment(ready, field="snapshot_name")
+        except ValueError as e:
+            raise BundleImportError(str(e)) from e
+        return plan
+
     plan.commands = [
-        ["virsh", "define", str(plan.domain_path)],
+        _virsh(cfg.libvirt_uri, "define", str(plan.domain_path)),
         # the imported VM is shut off — a plain internal snapshot is the pristine
         # revert target the runtime reverts to; --disk-only/--atomic are for LIVE VMs.
-        ["virsh", "snapshot-create-as", vm_name, ready, "--description", "evmc import baseline"],
+        _virsh(
+            cfg.libvirt_uri,
+            "snapshot-create-as",
+            vm_name,
+            ready,
+            "--description",
+            "evmc import baseline",
+        ),
     ]
     return plan
 
@@ -243,17 +304,25 @@ def import_bundle(
     force: bool = False,
     staging: str | Path | None = None,
 ) -> dict:
-    """Import a baked artwork zip into libvirt on this host. Returns a summary dict."""
+    """Import a baked VM or process artwork zip on this host. Returns a summary dict."""
     cfg = cfg or ImportConfig()
     tmp = tempfile.mkdtemp(prefix="evmc-import-", dir=str(staging) if staging else None)
+    # Bound before the try: the failure path and the cleanup both look at them, and a bundle
+    # that fails verification returns long before the materialize block runs.
+    staged: Path | None = None
+    retired: Path | None = None
     try:
-        root = promotion.unpack_bundle_zip(zip_path, tmp)
+        try:
+            root = promotion.unpack_bundle_zip(zip_path, tmp)
+        except ValueError as e:
+            raise BundleImportError(str(e)) from e
         v = promotion.verify_bundle(root)
         if not v["ok"]:
             raise BundleImportError(f"bundle fails verification, refusing to import: {v}")
 
         vm = (promotion.read_yaml(root / promotion.BUNDLE_YAML).get("vm")) or {}
-        if vm and vm.get("profile") not in ("baked", "baked-multi"):
+        is_process = vm.get("backend") == "process"
+        if vm and not is_process and vm.get("profile") not in ("baked", "baked-multi"):
             raise BundleImportError(
                 f"expected a baked bundle, got profile={vm.get('profile')!r}; "
                 "download it through the catalog (which bakes) rather than copying the drive dir"
@@ -270,7 +339,12 @@ def import_bundle(
         # domain fails the import cleanly with nothing half-installed.
         domain_xml = None
         host_notes: list[str] = []
-        if vm:
+        if is_process:
+            backend = ProcessBackend(plan.vm_name, instance_dir=root / "vm")
+            for name in [*backend.spec.images, *backend.spec.media]:
+                if not process_path(root / "vm", name).is_file():
+                    raise BundleImportError(f"process payload missing: {name}")
+        elif vm:
             tmpl = root / (vm.get("domain_template") or "vm/domain.template.xml")
             if not tmpl.is_file():
                 raise BundleImportError(f"bundle declares a VM but has no domain template: {tmpl}")
@@ -298,37 +372,72 @@ def import_bundle(
             "dry_run": dry_run,
         }
         if host_notes:
-            summary.setdefault("notes", []).extend(host_notes)
+            # summary is a heterogeneous dict (str/bool/list values), so setdefault's type is the
+            # union of all of them and .extend is not on it. Build the list explicitly.
+            notes = summary.get("notes")
+            summary["notes"] = ([*notes] if isinstance(notes, list) else []) + list(host_notes)
         if dry_run:
             summary["planned"] = True
             return summary
 
         # --- materialize -----------------------------------------------------
-        if plan.install_dir.exists() and force:
-            # Tear down the previously-imported libvirt domain + snapshots BEFORE deleting the
-            # disk files, so a re-import doesn't leave a stale domain / 'ready' snapshot pointing
-            # at removed paths (see _teardown_domain).
-            if vm:
-                _teardown_domain(run, plan.vm_name, plan.ready_snapshot)
-            shutil.rmtree(plan.install_dir)
-        plan.install_dir.mkdir(parents=True, exist_ok=True)
-
+        # Order matters on a gallery floor. The old sequence tore the exhibit down FIRST —
+        # destroy, snapshot-delete, undefine, rmtree — and only then copied the replacement in,
+        # so the most likely failure (no disk space for the new image) landed after the running
+        # exhibit's disk was already gone. Stage the new disks BESIDE the old install first;
+        # only once they are on disk do we take the old one apart, and a failure after that
+        # point puts the previous install back.
         if vm:
-            for rel, dest in plan.disks:
-                shutil.copy2(root / rel, dest)
+            staged = plan.install_dir.with_name(plan.install_dir.name + ".incoming")
+            shutil.rmtree(staged, ignore_errors=True)
+            if is_process:
+                shutil.copytree(root / "vm", staged)
+                ProcessBackend(plan.vm_name, instance_dir=staged).snapshot_create(
+                    plan.ready_snapshot
+                )
+            else:
+                staged.mkdir(parents=True, exist_ok=True)
+                for rel, dest in plan.disks:
+                    shutil.copy2(root / rel, staged / dest.name)
+
+        if plan.install_dir.exists() and force:
+            # The libvirt domain + its ready snapshot must go before the redefine (see
+            # _teardown_domain). Note this is NOT reversible: snapshot-delete removes the
+            # internal snapshot from the qcow2 itself, so the old recovery baseline is gone
+            # either way — which is why the disks are staged before we get here.
+            if is_process:
+                ProcessBackend(plan.vm_name, instance_dir=plan.install_dir).stop()
+            elif vm:
+                _teardown_domain(run, plan.vm_name, plan.ready_snapshot, cfg.libvirt_uri)
+            retired = plan.install_dir.with_name(plan.install_dir.name + ".replaced")
+            shutil.rmtree(retired, ignore_errors=True)
+            plan.install_dir.rename(retired)
+        if is_process:
+            assert staged is not None
+            staged.rename(plan.install_dir)
+            staged = None
+        else:
+            plan.install_dir.mkdir(parents=True, exist_ok=True)
+
+        if vm and not is_process:
+            assert staged is not None
+            for _rel, dest in plan.disks:
+                shutil.move(str(staged / dest.name), str(dest))
+            shutil.rmtree(staged, ignore_errors=True)
+            staged = None
             plan.domain_path.write_text(domain_xml or "")
-            run(["virsh", "define", str(plan.domain_path)])
+            run(_virsh(cfg.libvirt_uri, "define", str(plan.domain_path)))
             try:
                 # imported VM is shut off -> plain internal snapshot as the revert target
                 run(
-                    [
-                        "virsh",
+                    _virsh(
+                        cfg.libvirt_uri,
                         "snapshot-create-as",
                         plan.vm_name,
                         plan.ready_snapshot,
                         "--description",
                         "evmc import baseline",
-                    ]
+                    )
                 )
             except subprocess.CalledProcessError as e:
                 # FAIL CLOSED: the 'ready' snapshot IS the recovery baseline the runtime reverts
@@ -354,6 +463,14 @@ def import_bundle(
             seed = promotion.read_yaml(cfg_file)
         seed["vm_name"] = plan.vm_name
         seed["snapshot_name"] = plan.ready_snapshot
+        if is_process:
+            seed.update(
+                backend="process",
+                process_dir=str(plan.install_dir.resolve()),
+                heartbeat_timeout=30,
+                vm_startup_heartbeat_delay=cfg.vm_startup_heartbeat_delay,
+                api_host="127.0.0.1",
+            )
         plan.config_path.parent.mkdir(parents=True, exist_ok=True)
         plan.config_path.write_text(yaml.safe_dump(seed, sort_keys=False, allow_unicode=True))
         summary["config_path"] = str(plan.config_path)
@@ -364,9 +481,32 @@ def import_bundle(
             plan.archive_dir.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(root / "conservation" / "archive", plan.archive_dir)
 
+        if retired is not None:
+            shutil.rmtree(retired, ignore_errors=True)
+            retired = None
+
         summary["imported"] = True
         return summary
+    except BaseException:
+        # Put the previous install back where it was. The domain is not restored — its
+        # snapshot was deleted out of the qcow2 above and cannot be recreated — so the exhibit
+        # still needs a re-import; what this saves is the artwork's disk, which is the part a
+        # failed import used to take with it.
+        if retired is not None:
+            shutil.rmtree(plan.install_dir, ignore_errors=True)
+            with suppress(OSError):
+                retired.rename(plan.install_dir)
+                logger.error(
+                    "import failed; restored the previous process install at %s"
+                    if is_process
+                    else "import failed; restored the previous install at %s (the VM must be "
+                    "re-imported: its ready snapshot was removed before the failure)",
+                    plan.install_dir,
+                )
+        raise
     finally:
+        if staged is not None:
+            shutil.rmtree(staged, ignore_errors=True)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -375,11 +515,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("zip", help="the artwork .zip downloaded from the catalog")
     ap.add_argument("--dry-run", action="store_true", help="show the plan, touch nothing")
     ap.add_argument("--force", action="store_true", help="overwrite an existing install")
+    ap.add_argument(
+        "--vm-startup-heartbeat-delay",
+        type=float,
+        help="process emulator startup grace in seconds (default: 120)",
+    )
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
-        summary = import_bundle(args.zip, dry_run=args.dry_run, force=args.force)
-    except BundleImportError as e:
+        cfg = ImportConfig(
+            **(
+                {"vm_startup_heartbeat_delay": args.vm_startup_heartbeat_delay}
+                if args.vm_startup_heartbeat_delay is not None
+                else {}
+            )
+        )
+        summary = import_bundle(args.zip, cfg, dry_run=args.dry_run, force=args.force)
+    except (BundleImportError, ValueError) as e:
         print(f"import refused: {e}", file=sys.stderr)
         return 2
     print(yaml.safe_dump(summary, sort_keys=False, allow_unicode=True))

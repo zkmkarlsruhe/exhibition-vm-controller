@@ -28,6 +28,8 @@ Type=simple
 User=YOUR_USERNAME
 Group=YOUR_USERNAME
 WorkingDirectory=/path/to/exhibition-vm-controller/host-controller
+# Lets the unprivileged service user bind api_port below 1024 (the example config uses 80).
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 # Config file per artwork instance
 ExecStart=/path/to/exhibition-vm-controller/host-controller/.venv/bin/python -m vm_controller.api --config /path/to/exhibition-vm-controller/deployment/configs/%i.yaml

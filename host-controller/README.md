@@ -211,10 +211,7 @@ from vm_controller import VMManager, HeartbeatMonitor, Config
 config = Config.from_yaml("config.yaml")
 
 # Create VM manager
-vm_manager = VMManager(
-    vm_name=config.vm_name,
-    snapshot_name=config.snapshot_name
-)
+vm_manager = VMManager(vm_name=config.vm_name, snapshot_name=config.snapshot_name)
 
 # Control VM
 vm_manager.start_vm()

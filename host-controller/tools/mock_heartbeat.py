@@ -10,10 +10,11 @@ Organization: ZKM | Center for Art and Media Karlsruhe
 License: MIT
 """
 
-import time
-import requests
 import sys
+import time
 from datetime import datetime
+
+import requests
 
 
 def send_heartbeat(api_url: str = "http://localhost:8000") -> dict:

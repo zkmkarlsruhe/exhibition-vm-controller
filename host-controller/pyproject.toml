@@ -22,22 +22,30 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = "^3.11"  # vmctl-core (bundle format + import) requires >=3.11
-fastapi = "^0.109.0"
-uvicorn = {extras = ["standard"], version = "^0.27.0"}
-pyyaml = "^6.0.1"
-pydantic = "^2.5.0"
-pydantic-settings = "^2.1.0"
+fastapi = "^0.165.0"  # 0.109 shipped a starlette whose TestClient predates httpx 0.28
+uvicorn = {extras = ["standard"], version = "^0.54.0"}
+pyyaml = "^6.0.4"
+pydantic = "^2.14.4"
+pydantic-settings = "^2.16.3"
 pyserial = {version = "^3.5", optional = true}
-# the exhibition handoff — shared promotion bundle format (verify/pack/unpack),
-# the same seam rvmc writes with, so catalog + importer can't drift from it.
+# Shared core, on two seams now: the exhibition handoff (promotion bundle format —
+# verify/pack/unpack, the same seam rvmc writes with, so catalog + importer can't drift
+# from it) AND the VM backend + plugin spec/runtime. A plugin authored against the shared
+# spec in the research workbench runs UNCHANGED here. The dependency arrow is
+# exhibition -> vmctl-core only (NEVER exhibition -> research). develop=true so local edits
+# to the core are live; a standalone checkout without the sibling pins a released version.
 vmctl-core = { path = "../../vmctl-core", develop = true }
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.4.0"
-pytest-asyncio = "^0.21.0"
-black = "^24.0.0"
-ruff = "^0.1.0"
-mypy = "^1.8.0"
+# Current, and matched to the rest of the family so one `ruff format` means the same thing in
+# every repo. black is gone (ruff formats); the old pins here were 2-3 majors behind because
+# nothing ever ran them — see the CI check job this arrived with.
+pytest = "^9.2.0"
+pytest-asyncio = "^1.5.0"
+ruff = "^0.17.6"
+mypy = "^2.4.1"
+types-PyYAML = "^6.0"
+httpx = "^0.28.1"  # fastapi's TestClient transport
 
 [tool.poetry.scripts]
 exhibition-vm-controller = "vm_controller.api:main"
@@ -50,17 +58,44 @@ vmctl = "vm_controller.api:main"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-[tool.black]
-line-length = 100
-target-version = ['py310']
+# black is gone: ruff formats, and running two formatters over one tree is how a file ends up
+# reformatted twice per commit. Same line length, so the result is unchanged.
+
+[tool.pytest.ini_options]
+# Collect ONLY tests/. Without this, any top-level script named test_*.py is collected as a
+# test suite: tools/mock_heartbeat.py used to be test_heartbeat.py, and CI died on its
+# `import requests` — a dependency the application does not have and does not want.
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+target-version = "py311"  # matches requires-python; py310 was left over from before the core dep
+
+[tool.ruff.lint]
+# ruff moved select/ignore under [tool.ruff.lint] in 0.2 — they were silently ignored here since.
 select = ["E", "F", "I", "N", "W"]
 ignore = []
 
+[tool.ruff.lint.per-file-ignores]
+# conservation/ is operator tooling ported from elsewhere, not the controller package. Two rules
+# fire on it for reasons that are not defects:
+#   N806/N812 — the legacy in-guest agent mirrors Win32 names (EnumProc, SM_CXVIRTUALSCREEN) and
+#     the kiosk UI aliases modules the way its templates read; renaming them to satisfy a linter
+#     would make them harder to check against the API they mirror.
+#   E501 — recipe/description strings that read worse wrapped than long.
+"conservation/guest_agent/*" = ["N806", "N812", "E501"]
+"conservation/kiosk/*" = ["N806", "N812", "E501"]
+"conservation/proxy/*" = ["N806", "N812", "E501"]
+"conservation/traffic_webui.py" = ["N806", "N812", "E501"]
+# do_GET/do_HEAD/do_POST are BaseHTTPRequestHandler's dispatch names — renaming them turns the
+# handler off.
+"conservation/proxy/archive_server.py" = ["N806", "N812", "E501", "N815"]
+# The example plugin ships as `<name>.example.py` on purpose: a operator copies it and drops the
+# suffix. The dotted stem is not an importable module name, and is not meant to be.
+"plugins/*.example.py" = ["N999"]
+
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

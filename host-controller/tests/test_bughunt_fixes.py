@@ -6,16 +6,19 @@ CI without libvirt.
 """
 
 import asyncio
+import json
 import subprocess
+import time
 import types
 
 import pytest
 from fastapi import HTTPException
+from vmctl_core.plugins.runtime import SSE_QUEUE_MAXSIZE
 
 import vm_controller.api as api
 from vm_controller.config import Config
 from vm_controller.heartbeat_monitor import HeartbeatMonitor
-from vm_controller.plugins import _SSE_QUEUE_MAXSIZE, PluginRegistry
+from vm_controller.plugins import PluginRegistry
 from vm_controller.vm_manager import VMManager
 
 # --- helpers -----------------------------------------------------------------------------------
@@ -26,6 +29,22 @@ def _req(ip: str, headers: dict | None = None):
         client=types.SimpleNamespace(host=ip),
         headers=headers or {},
     )
+
+
+def _virsh_parts(cmd):
+    """(subcommand, positional args) for a virsh call, whatever shape it arrives in.
+
+    VMManager shells out directly for the staged golden-snapshot refresh, but delegates the
+    rest to vmctl_core's LibvirtBackend, which passes a connection flag: `virsh -c <uri> <sub>
+    <vm> ...` instead of `virsh <sub> <vm> ...`. Tests assert on the SEQUENCE of operations,
+    not on that spelling.
+    """
+    if not (isinstance(cmd, list) and cmd[:1] == ["virsh"]):
+        return None, []
+    args = cmd[1:]
+    if args[:1] == ["-c"]:
+        args = args[2:]
+    return (args[0] if args else None), args[1:]
 
 
 class _FakeVirsh:
@@ -40,17 +59,17 @@ class _FakeVirsh:
         self.calls.append(cmd)
         if not (isinstance(cmd, list) and cmd[:1] == ["virsh"]):
             return subprocess.CompletedProcess(cmd, 0, "", "")
-        sub = cmd[1]
+        sub, rest = _virsh_parts(cmd)
+        name = rest[1] if len(rest) > 1 else None  # rest = [<vm>, <snapshot>, *flags]
         if sub == "snapshot-list":
             return subprocess.CompletedProcess(cmd, 0, "\n".join(sorted(self.snaps)) + "\n", "")
         if sub == "snapshot-create-as":
-            name = cmd[3]
             if name == self.fail_create:
                 raise subprocess.CalledProcessError(1, cmd, "", "create failed")
             self.snaps.add(name)
             return subprocess.CompletedProcess(cmd, 0, "", "")
         if sub == "snapshot-delete":
-            self.snaps.discard(cmd[3])
+            self.snaps.discard(name)
             return subprocess.CompletedProcess(cmd, 0, "", "")
         # domiflist / net-dumpxml / domstate etc.
         return subprocess.CompletedProcess(cmd, 0, "", "")
@@ -88,17 +107,19 @@ def test_create_snapshot_stages_before_touching_golden(monkeypatch):
 
     # golden committed, staging cleaned up
     assert fake.snaps == {"ready"}
-    creates = [c for c in fake.calls if c[1] == "snapshot-create-as"]
-    deletes = [c for c in fake.calls if c[1] == "snapshot-delete"]
+    creates = [c for c in fake.calls if _virsh_parts(c)[0] == "snapshot-create-as"]
+    deletes = [c for c in fake.calls if _virsh_parts(c)[0] == "snapshot-delete"]
+
     # staging is created BEFORE the old golden is deleted
-    staging_create = next(
-        i
-        for i, c in enumerate(fake.calls)
-        if c[1] == "snapshot-create-as" and c[3] == "ready__staging"
-    )
-    golden_delete = next(
-        i for i, c in enumerate(fake.calls) if c[1] == "snapshot-delete" and c[3] == "ready"
-    )
+    def _index_of(sub: str, snapshot: str) -> int:
+        for i, c in enumerate(fake.calls):
+            s_, rest = _virsh_parts(c)
+            if s_ == sub and rest[1:2] == [snapshot]:
+                return i
+        raise AssertionError(f"no {sub} call for {snapshot!r} in {fake.calls}")
+
+    staging_create = _index_of("snapshot-create-as", "ready__staging")
+    golden_delete = _index_of("snapshot-delete", "ready")
     assert staging_create < golden_delete
     assert creates and deletes
 
@@ -149,6 +170,17 @@ def test_client_ip_ignores_headers_from_untrusted_peer():
     api.config = types.SimpleNamespace(trusted_proxies=["127.0.0.1"])
     req = _req("192.168.122.9", {"x-real-ip": "10.0.0.1"})  # guest trying to spoof
     assert api._client_ip(req) == "192.168.122.9"
+
+
+def test_client_ip_ignores_x_real_ip_from_docker_bridge_peer():
+    # audit 2026-10-30 #2: a containerised nginx reaches the controller from the Docker bridge
+    # gateway (e.g. 172.17.0.1), which is NOT in the default trusted_proxies (loopback only). The
+    # forwarded guest address is then ignored and every request looks like the bridge gateway:
+    # heartbeat 403, guest guard bypassed. See conservation/README.md ("Front door in Docker").
+    default_trusted = Config.model_fields["trusted_proxies"].default
+    api.config = types.SimpleNamespace(trusted_proxies=default_trusted)
+    req = _req("172.17.0.1", {"x-real-ip": "192.168.122.55"})
+    assert api._client_ip(req) == "172.17.0.1"
 
 
 def test_guard_blocks_guest_behind_nginx():
@@ -227,19 +259,22 @@ def test_from_yaml_rejects_top_level_list(tmp_path):
 
 
 # --- bug 7: SSE queue is bounded and drops the oldest event -------------------------------------
+# The cap and the drop-oldest step now live in the shared registry (vmctl_core.plugins), which
+# this one subclasses; the test stays here because the guarantee is an exhibition requirement —
+# a kiosk tab that stops reading must not grow a queue over a run of weeks.
 
 
 def test_push_event_bounds_queue_by_dropping_oldest():
     async def drive():
         reg = PluginRegistry()
         q = reg.sse_connect()
-        for i in range(_SSE_QUEUE_MAXSIZE):
+        for i in range(SSE_QUEUE_MAXSIZE):
             q.put_nowait(("e", str(i)))
         reg.push_event("e", "newest")  # queue is full -> drop oldest, keep newest
         return q
 
     q = asyncio.run(drive())
-    assert q.qsize() == _SSE_QUEUE_MAXSIZE  # stayed bounded
+    assert q.qsize() == SSE_QUEUE_MAXSIZE  # stayed bounded
     assert q.get_nowait() == ("e", "1")  # ("e", "0") was dropped
 
 
@@ -248,6 +283,8 @@ def test_push_event_bounds_queue_by_dropping_oldest():
 
 class _FakeVMManager:
     """Minimal VMManager stand-in for exercising the API handlers."""
+
+    host_liveness = False
 
     def __init__(self, network="192.168.122.0/24", restart_result=True, start_hook=None):
         self.vm_name = "testvm"
@@ -303,6 +340,95 @@ def test_restart_false_surfaces_error_and_restores_monitoring():
         asyncio.run(api.restart_vm(_req("10.0.0.5")))
     assert exc.value.status_code == 500
     assert api.heartbeat_monitor.enabled is True  # restored, not blind
+
+
+def test_failed_auto_recovery_rearms_the_timeout_clock():
+    # audit 2026-10-30 #1: on_heartbeat_timeout used to `return` early when restart_vm() came
+    # back False (guest never QEMU-agent ready). start_vm() had already reset() the monitor
+    # (last_heartbeat=None), and is_timed_out() is False while None — so the hung exhibit was
+    # never retried. The callback must fall through to reset/enable so the timeout can fire again.
+    class _HungVM(_FakeVMManager):
+        auto_revert_enabled = True
+
+        def restart_vm(self, wait_for_ready=True):
+            api.heartbeat_monitor.reset()  # what the real start_vm() does via on_reset_callback
+            return False
+
+    api.vm_manager = _HungVM()
+    api.config = _base_config()
+    api.heartbeat_monitor = HeartbeatMonitor(timeout=0.05)
+    api.heartbeat_monitor.enable()
+
+    asyncio.run(api.on_heartbeat_timeout())
+    assert api.heartbeat_monitor.enabled is True
+    assert api.heartbeat_monitor.last_heartbeat is not None  # clock re-armed, not left at None
+    time.sleep(0.1)
+    assert api.heartbeat_monitor.is_timed_out() is True  # a still-hung guest is caught again
+
+
+def test_refused_guest_restart_does_not_burn_the_rate_limit_window(monkeypatch):
+    # audit 2026-10-30 #6: the rate-limit stamp was taken BEFORE the plugin gate, so a restart the
+    # plugin refused (403) still started the 60 s window and the next, legitimate guest request
+    # got a 429. The stamp must land only after the plugin check and a successful revert.
+    class _Plugins:
+        def __init__(self):
+            self.reason = "phase bigbang"
+
+        def check_pre_restart(self):
+            return self.reason
+
+        def run_post_restart(self):
+            pass
+
+    monkeypatch.setattr(api, "_last_guest_restart", 0.0)
+    api.vm_manager = _FakeVMManager()
+    api.config = _base_config()
+    api.plugin_registry = plugins = _Plugins()
+    api.heartbeat_monitor = HeartbeatMonitor()
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(api.restart_vm(_req("192.168.122.10")))
+    assert exc.value.status_code == 403
+    assert api._last_guest_restart == 0.0  # refused -> window untouched
+
+    plugins.reason = None
+    asyncio.run(api.restart_vm(_req("192.168.122.10")))  # must not be 429
+    assert api._last_guest_restart > 0.0  # stamped after the successful revert
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(api.restart_vm(_req("192.168.122.10")))
+    assert exc.value.status_code == 429
+
+
+def test_unknown_subnet_treats_restart_caller_as_guest(monkeypatch):
+    # audit 2026-10-30 #6: with the subnet unknown is_from_vm() is False, so a guest used to get
+    # the operator path (no rate limit, no plugin gate) while every other endpoint failed closed.
+    monkeypatch.setattr(api, "_last_guest_restart", 0.0)
+    api.vm_manager = _FakeVMManager(network=None)
+    api.config = _base_config()
+    api.plugin_registry = None
+    api.heartbeat_monitor = HeartbeatMonitor()
+
+    asyncio.run(api.restart_vm(_req("10.0.0.5")))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(api.restart_vm(_req("10.0.0.5")))
+    assert exc.value.status_code == 429
+
+
+def test_shell_hook_signal_event_is_valid_json(tmp_path, monkeypatch):
+    # audit 2026-10-30 #13: the SSE payload for a shell-hook signal was hand-built with %s, so a
+    # value containing a quote produced invalid JSON and the browser's JSON.parse threw.
+    hook = tmp_path / "signals" / "ui-state.sh"
+    hook.parent.mkdir()
+    hook.write_text("#!/bin/sh\nexit 0\n")
+    hook.chmod(0o755)
+    reg = PluginRegistry(plugins_dir=tmp_path / "plugins", hooks_dir=tmp_path)
+    reg._sse_clients = [object()]  # non-empty: push_event is only called with clients attached
+    pushed = []
+    monkeypatch.setattr(reg, "push_event", lambda event, data: pushed.append((event, data)))
+
+    assert reg.handle_signal("ui-state", 'say "hi"') is True
+    assert json.loads(pushed[0][1]) == {"event": "ui-state", "value": 'say "hi"'}
 
 
 def test_start_keeps_monitor_disabled_during_revert():
@@ -431,3 +557,9 @@ def test_heartbeat_fails_closed_when_subnet_unknown():
     with pytest.raises(HTTPException) as exc:
         asyncio.run(api.receive_heartbeat(_req("192.168.122.50")))
     assert exc.value.status_code == 403
+
+
+def test_log_level_accepts_lowercase_from_older_configs():
+    assert Config(vm_name="x", log_level="info").log_level == "INFO"
+    with pytest.raises(ValueError):
+        Config(vm_name="x", log_level="INFOO")

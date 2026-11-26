@@ -14,7 +14,6 @@ Returns: "pressed" or "released"
 """
 
 import logging
-import serial  # pip install pyserial
 
 logger = logging.getLogger(__name__)
 

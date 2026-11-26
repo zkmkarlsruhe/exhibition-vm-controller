@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dispatch the conservation tools. The container is one image; pick a tool:
 #   docker run ... cons-toolkit proxy                  # mitmproxy archive server
-#   docker run ... cons-toolkit capture "CYF-Subfusion"
+#   docker run ... cons-toolkit capture "CYF-Example"
 #   docker run -i ... cons-toolkit mcp "CYF-Example"   # MCP over stdio
 #   docker run ... cons-toolkit install-ca --vm "CYF-Example"
 #   docker run ... cons-toolkit shell

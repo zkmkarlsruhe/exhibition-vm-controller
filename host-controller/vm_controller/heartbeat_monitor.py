@@ -10,9 +10,18 @@ License: MIT
 import asyncio
 import logging
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Protocol
 
 logger = logging.getLogger(__name__)
+
+
+class _VMLike(Protocol):
+    """The slice of VMManager this monitor uses — enough to type it without importing it (the
+    import would be circular: vm_manager owns the monitor)."""
+
+    def is_running(self) -> bool:
+        """Whether the domain is up (shells out to virsh)."""
+        ...
 
 
 class HeartbeatMonitor:
@@ -28,7 +37,10 @@ class HeartbeatMonitor:
         timeout: float = 15.0,
         check_interval: float = 0.5,
         on_timeout_callback: Optional[Callable] = None,
-        vm_manager: Optional[object] = None,
+        # Typed as the VMManager surface this monitor actually uses (is_running), not `object`:
+        # `object` made the attribute unusable to the type checker, so a rename or a signature
+        # change on the other side would land here as a runtime AttributeError instead.
+        vm_manager: Optional["_VMLike"] = None,
         recovery_backoff: float = 30.0,
     ):
         self.timeout = timeout
@@ -51,7 +63,7 @@ class HeartbeatMonitor:
         # Edge-trigger guard for recovery. Without it the loop re-fires recovery every
         # check_interval (0.5s) while the VM stays down / auto_revert is disabled, flooding
         # the journal and hammering virsh. We only re-attempt after recovery_backoff seconds.
-        self._last_recovery_attempt = 0.0
+        self._last_recovery_attempt = float("-inf")  # monotonic may start near 0 at boot
 
         logger.info(
             f"Initialized HeartbeatMonitor (timeout: {timeout}s, "
@@ -68,7 +80,7 @@ class HeartbeatMonitor:
     def enable(self) -> None:
         """Enable heartbeat monitoring. Resets the timer."""
         self._enabled = True
-        self.last_heartbeat = time.time()
+        self.last_heartbeat = time.monotonic()
         logger.info("Heartbeat monitoring enabled")
 
     def disable(self) -> None:
@@ -109,20 +121,30 @@ class HeartbeatMonitor:
 
     def receive_heartbeat(self) -> None:
         """Record a heartbeat from the guest."""
-        self.last_heartbeat = time.time()
+        self.last_heartbeat = time.monotonic()
         self._has_received_heartbeat = True
+
+    def defer_timeout(self) -> None:
+        """Give an inconclusive host probe time without recording a successful heartbeat."""
+        self.last_heartbeat = time.monotonic()
 
     def is_timed_out(self) -> bool:
         if not self._enabled or self.last_heartbeat is None:
             return False
-        return (time.time() - self.last_heartbeat) > self.timeout
+        return (time.monotonic() - self.last_heartbeat) > self.timeout
 
     def get_status(self) -> dict:
-        time_since = (time.time() - self.last_heartbeat) if self.last_heartbeat else None
+        time_since = (time.monotonic() - self.last_heartbeat) if self.last_heartbeat else None
         return {
             "enabled": self._enabled,
             "timeout": self.timeout,
-            "last_heartbeat": self.last_heartbeat if self._has_received_heartbeat else None,
+            # Timestamps are monotonic (immune to NTP steps); the UI renders this one as a
+            # wall-clock time, so convert it on the way out.
+            "last_heartbeat": (
+                time.time() - time_since
+                if self._has_received_heartbeat and time_since is not None
+                else None
+            ),
             "time_since_heartbeat": time_since,
             "is_timed_out": self.is_timed_out(),
             "has_received_heartbeat": self._has_received_heartbeat,
@@ -146,7 +168,7 @@ class HeartbeatMonitor:
 
     def _in_recovery_cooldown(self) -> bool:
         """True while we are still inside the backoff window after a recovery attempt."""
-        return (time.time() - self._last_recovery_attempt) < self.recovery_backoff
+        return (time.monotonic() - self._last_recovery_attempt) < self.recovery_backoff
 
     async def _check_once(self) -> None:
         """Run a single monitoring check. Raises nothing that should kill the loop."""
@@ -166,27 +188,27 @@ class HeartbeatMonitor:
             if not running:
                 if not self._in_recovery_cooldown():
                     logger.error("VM is not running, triggering recovery")
-                    self._last_recovery_attempt = time.time()
+                    self._last_recovery_attempt = time.monotonic()
                     await self._trigger_recovery()
                     # Recovery (revert + boot + ready-wait) can outlast recovery_backoff. Restamp
                     # AFTER it returns so the cooldown covers the whole restart — otherwise the
                     # window has already elapsed by the time the op lock frees and the very next
                     # tick queues a SECOND revert on top of a still-booting guest (double-revert).
-                    self._last_recovery_attempt = time.time()
+                    self._last_recovery_attempt = time.monotonic()
                 return
 
         # Check heartbeat timeout
         if self.is_timed_out():
             if not self._in_recovery_cooldown():
-                logger.error(
-                    f"Heartbeat timeout: {time.time() - self.last_heartbeat:.1f}s "
-                    f"(threshold: {self.timeout}s)"
-                )
-                self._last_recovery_attempt = time.time()
+                # is_timed_out() returned True, which means last_heartbeat is set — but say so
+                # locally so the arithmetic is provably safe rather than safe-by-caller.
+                since = time.monotonic() - (self.last_heartbeat or time.monotonic())
+                logger.error(f"Heartbeat timeout: {since:.1f}s (threshold: {self.timeout}s)")
+                self._last_recovery_attempt = time.monotonic()
                 await self._trigger_recovery()
                 # Restamp AFTER recovery so the backoff window covers a slow restart+ready wait
                 # (see the VM-state branch above) — no immediate second revert on a slow boot.
-                self._last_recovery_attempt = time.time()
+                self._last_recovery_attempt = time.monotonic()
 
     async def _monitoring_loop(self) -> None:
         # This is the SOLE recovery loop for the whole show. A single unexpected exception must

@@ -148,3 +148,16 @@ def test_index_page_renders(env):
     r = c.get("/")
     assert r.status_code == 200 and "finished artworks" in r.text
     assert "download .zip" in r.text
+
+
+def test_the_env_var_the_error_names_is_the_one_that_works(monkeypatch) -> None:
+    """The download error and the startup warning tell an operator which variable to set. If that
+    name does not actually reach the field, the advice sends them in a circle: set it, restart,
+    identical failure, no hint. pydantic-settings composes the name from the prefix and the field
+    (VMCTL_CATALOG_ + catalog_path), so the doubled word is real — and looks enough like a typo
+    that it has already been written the short way once."""
+    from vm_controller.catalog import CATALOG_PATH_ENV, CatalogConfig
+
+    monkeypatch.delenv("VMCTL_CATALOG_CATALOG_PATH", raising=False)
+    monkeypatch.setenv(CATALOG_PATH_ENV, "/srv/vmctl/catalog/catalog.yaml")
+    assert CatalogConfig(_env_file=None).catalog_path == "/srv/vmctl/catalog/catalog.yaml"

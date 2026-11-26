@@ -21,23 +21,19 @@ Different runtimes keep their own trust store, so one install isn't enough:
 import argparse
 import json
 import ntpath
+import os
 import socket
-import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # guest_ip.py
+import guest_ip  # noqa: E402
 
 GUEST_CA = r"C:\zkm-proxy-ca.pem"
 ALIAS = "zkm-proxy"
 
 
 def resolve_agent_ip(vm):
-    r = subprocess.run(
-        ["virsh", "domifaddr", vm, "--source", "agent"], capture_output=True, text=True, timeout=20
-    )
-    for line in r.stdout.splitlines():
-        for tok in line.split():
-            if tok.count(".") == 3 and not tok.startswith("127."):
-                return tok.split("/")[0]
-    return None
+    return guest_ip.resolve_ip(vm)
 
 
 class Agent:

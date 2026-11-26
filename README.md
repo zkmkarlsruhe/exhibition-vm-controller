@@ -102,19 +102,24 @@ For VM management and configuration:
 exhibition-vm-controller/
 ├── README.md                          # This file
 ├── LICENSE                            # MIT License
+├── CHANGELOG.md, CONTRIBUTING.md, AUTHORS
+├── CITATION.cff, codemeta.json, .zenodo.json   # Citation metadata
 ├── docs/                              # Detailed documentation
 │   ├── architecture.md                # System architecture
 │   ├── getting-started.md             # Setup guide
 │   ├── heartbeat-protocol.md          # Communication protocol
 │   ├── api-reference.md               # REST API documentation
+│   ├── exhibition-handoff.md          # Research → exhibition handoff (bundles)
 │   └── troubleshooting.md             # Common issues
 ├── guest-scripts/                     # VM guest monitoring scripts
-│   └── windows-xp/                    # Windows XP examples (AutoIT)
-│       ├── README.md                  # Setup guide
-│       ├── heartbeat.au3              # Heartbeat sender
-│       ├── idle-monitor.au3           # Idle detection
-│       ├── process-watchdog.au3       # Process monitoring
-│       └── run.au3                    # Process launcher
+│   ├── windows-xp/                    # Windows XP examples (AutoIT)
+│   │   ├── README.md                  # Setup guide
+│   │   ├── heartbeat.au3              # Heartbeat sender
+│   │   ├── idle-monitor.au3           # Idle detection
+│   │   ├── process-watchdog.au3       # Process monitoring
+│   │   ├── button-detector.au3        # Hardware button poll example
+│   │   └── run.au3                    # Process launcher
+│   └── mac-os-9/                      # Mac OS 9 examples (AppleScript)
 ├── host-controller/                   # Python host controller (Poetry project)
 │   ├── pyproject.toml                 # Dependencies
 │   ├── README.md                      # Installation guide
@@ -123,17 +128,31 @@ exhibition-vm-controller/
 │   │   ├── vm_manager.py              # VM control (libvirt/virsh)
 │   │   ├── heartbeat_monitor.py       # Heartbeat tracking
 │   │   ├── api.py                     # REST API (FastAPI)
-│   │   └── config.py                  # Configuration
-│   └── examples/                      # Usage examples
-│       ├── config.example.yaml        # Configuration template
-│       └── basic_usage.py             # Python API example
+│   │   ├── config.py                  # Configuration
+│   │   ├── plugins.py                 # Plugin registry
+│   │   ├── catalog.py                 # Exhibition catalog (evmctl-catalog)
+│   │   └── importer.py                # Bundle import (evmctl-import)
+│   ├── plugins/                       # Artwork-specific plugins (see README.md)
+│   ├── hooks/                         # Signal and poll hook examples
+│   ├── conservation/                  # Conservation toolkit (Docker)
+│   ├── examples/
+│   │   └── config.example.yaml        # Configuration template
+│   ├── static/                        # Web UI (index.html)
+│   ├── tools/mock_heartbeat.py        # Heartbeat simulator
+│   └── tests/                         # pytest suite
 └── deployment/                        # Deployment templates
+    ├── configs/                       # Example configs (libvirt, process backend)
     ├── systemd/                       # Systemd service templates
     │   ├── exhibition-vm-controller.service
+    │   ├── exhibition-vm-controller@.service
+    │   ├── evmc-catalog.service
     │   └── README.md
-    └── openbox/                       # Openbox configuration
-        ├── autostart                  # Autostart virt-viewer
-        └── README.md
+    ├── openbox/                       # Openbox configuration
+    │   ├── autostart                  # Autostart virt-viewer
+    │   └── README.md
+    ├── nginx/                         # nginx site configs
+    ├── libvirt-hooks/qemu             # libvirt qemu hook (port forwarding)
+    └── sudoers.d/                     # sudoers drop-in
 ```
 
 ## Key Features
@@ -263,7 +282,10 @@ poetry run python -m vm_controller.api
    ```
    - Create VM with desired legacy OS
    - Install OS and artwork application
-   - Configure networking (bridged or NAT)
+   - Configure networking: NAT (a libvirt network) is required; bridged is unsupported.
+     The controller reads the guest subnet from the libvirt network to tell guest requests
+     from operator requests; a bridged NIC has no subnet to read and every heartbeat is
+     rejected.
 
 2. **Install QEMU Guest Agent** (OPTIONAL but recommended):
    - **Windows**: Install `qemu-ga` from [VirtIO drivers ISO](https://github.com/virtio-win/kvm-guest-drivers-windows)
@@ -407,7 +429,7 @@ An artwork flows **analysis → workbench → exhibition**:
 2. **Workbench** — [`research-vm-controller`](https://github.com/zkmkarlsruhe/research-vm-controller) revives it in a period VM.
 3. **Exhibition** — [`exhibition-vm-controller`](https://github.com/zkmkarlsruhe/exhibition-vm-controller) (this repo) runs a self-healing exhibition copy.
 
-This controller depends on the shared library [`vmctl-core`](https://github.com/zkmkarlsruhe/vmctl-core) (bundle format) and receives finished works from the research workbench as promotion bundles (see [`docs/exhibition-handoff.md`](docs/exhibition-handoff.md)).
+This controller depends on the shared library [`vmctl-core`](https://github.com/zkmkarlsruhe/vmctl-core) (VM backend, plugin runtime, bundle format) and receives finished works from the research workbench as promotion bundles (see [`docs/exhibition-handoff.md`](docs/exhibition-handoff.md)).
 
 Superproject with the family repositories as submodules: [`zkmkarlsruhe/vmctl`](https://github.com/zkmkarlsruhe/vmctl) · project site: [vmctl.org](https://vmctl.org)
 

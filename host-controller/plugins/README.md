@@ -22,6 +22,7 @@ def get_button_state() -> str:
     # Read from hardware, database, file, etc.
     return "pressed"  # or "released", "on", "off", etc.
 
+
 def setup(registry):
     registry.register_poll_provider("button", get_button_state)
 ```
@@ -36,6 +37,7 @@ Signal handlers receive notifications from AutoIt scripts:
 def handle_ui_state(value: str) -> None:
     # Log, save to database, trigger actions, etc.
     print(f"UI state changed to: {value}")
+
 
 def setup(registry):
     registry.register_signal_handler("ui-state", handle_ui_state)

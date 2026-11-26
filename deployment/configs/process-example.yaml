@@ -1,0 +1,22 @@
+# Exhibition VM Controller: an emulator process instead of a libvirt domain (MAME, FS-UAE, ...).
+# process_dir holds process.json (vmctl_core.backends.ProcessSpec) and the writable images.
+# Nothing runs inside the machine, so the host reports liveness; bind the API to localhost.
+
+vm_name: "example-emulator"
+backend: "process"
+process_dir: "/var/lib/vmctl/example-emulator"
+snapshot_name: "ready"
+
+heartbeat_timeout: 30.0
+heartbeat_check_interval: 1.0
+vm_startup_wait_interval: 5.0
+vm_startup_max_attempts: 40
+vm_startup_heartbeat_delay: 120.0  # longer than the emulated boot
+auto_revert_enabled: true
+
+api_host: "127.0.0.1"
+api_port: 8080
+api_reload: false
+
+log_level: "INFO"
+check_qemu_agent: false

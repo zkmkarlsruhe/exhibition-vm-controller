@@ -22,7 +22,7 @@ python3 host/virsh-broker.py                     # socket: /tmp/cons-sock/virsh.
 docker compose build
 docker compose up -d proxy                        # mitmproxy archive server :8080
 docker compose run --rm -T tools mcp "CYF-Example"      # MCP over stdio
-docker compose run --rm --user 0 tools capture "CYF-Subfusion" -s 120
+docker compose run --rm --user 0 tools capture "CYF-Example" -s 120
 docker compose run --rm tools install-ca --vm "CYF-Example"
 ```
 
@@ -65,7 +65,7 @@ Three options, increasingly forceful:
    Needs the iptables NOPASSWD sudoers rule (see `deployment/sudoers.d/`).
 
    ```bash
-   docker compose run --rm tools transparent-on "CYF-Subfusion"   # broker adds the REDIRECT
+   docker compose run --rm tools transparent-on "CYF-Example"   # broker adds the REDIRECT
    docker compose run -d  --rm -e CONS_MODE=transparent tools proxy
    docker compose run -d  --rm tools dns --to 192.168.122.1 --host '*.sounddogs.com'
    # ... and transparent-off when done (broker also auto-cleans on exit)
@@ -124,7 +124,21 @@ docker compose up -d archive nginx       # front door, scoped to the VM-net IP
 
 Migrating off the host nginx: stop it, bind the controller to a Docker-reachable
 address (`api_host: 0.0.0.0`, covered by the VM-origin CSRF guard), point guests
-at the new nginx. To keep the real guest **source IP** (for per-VM routing),
+at the new nginx. **Also add the bridge gateway to the controller's
+`trusted_proxies`**: nginx reaches the controller from the `cons` bridge gateway
+(e.g. `172.18.0.1`), not from `127.0.0.1`, so with the default (loopback only)
+the controller ignores `X-Real-IP`, sees every request as coming from the
+gateway, rejects the heartbeat (403 → revert loop) and lets guest content past
+the destructive-endpoint guard. In the controller config:
+
+```yaml
+trusted_proxies: ["127.0.0.1", "::1", "172.18.0.1"]   # + the cons bridge gateway
+```
+```bash
+docker network inspect conservation_cons -f '{{(index .IPAM.Config 0).Gateway}}'   # the real value
+```
+
+To keep the real guest **source IP** (for per-VM routing),
 attach nginx to a **macvlan on virbr0** instead of `-p`. Validated:
 nginx-unprivileged on the VM IP routes Host=deadhost → archive (200) and
 Host=gateway → controller.
@@ -145,7 +159,7 @@ from the other artworks on the bridge). This is the only layer that is truly
 exhaustive; a MITM proxy only ever sees the HTTP(S) you route into it.
 
 ```bash
-sudo ./capture_traffic.py CYF-Subfusion --seconds 120
+sudo ./capture_traffic.py CYF-Example --seconds 120
 sudo ./capture_traffic.py "CYF-Example" --out /tmp/capture.pcap   # Ctrl-C to stop
 ```
 

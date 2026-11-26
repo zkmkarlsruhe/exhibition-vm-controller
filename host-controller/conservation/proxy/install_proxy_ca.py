@@ -11,20 +11,16 @@ bake it into the `ready` snapshot.
 
 import argparse
 import json
+import os
 import socket
-import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # guest_ip.py
+import guest_ip  # noqa: E402
 
 
 def resolve_agent_ip(vm):
-    r = subprocess.run(
-        ["virsh", "domifaddr", vm, "--source", "agent"], capture_output=True, text=True, timeout=20
-    )
-    for line in r.stdout.splitlines():
-        for tok in line.split():
-            if tok.count(".") == 3 and not tok.startswith("127."):
-                return tok.split("/")[0]
-    return None
+    return guest_ip.resolve_ip(vm)
 
 
 def agent_call(ip, port, name, args):

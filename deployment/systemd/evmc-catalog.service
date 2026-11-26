@@ -8,7 +8,7 @@
 # pushed anywhere, the handoff is in-system (the autopsy<->rvmc pattern).
 #
 # Installation:
-#   1. Edit User/Group/WorkingDirectory + the VMCTL_CATALOG_* env below
+#   1. Edit User/Group/WorkingDirectory (three places) + the VMCTL_CATALOG_* env below
 #   2. Copy to /etc/systemd/system/evmc-catalog.service
 #   3. sudo systemctl daemon-reload && sudo systemctl enable --now evmc-catalog
 #
@@ -32,7 +32,10 @@ Environment=VMCTL_CATALOG_DRIVES_ROOT=/srv/vmctl/drives
 # Golden-base catalog.yaml — needed to bake a thin bundle into a standalone image.
 Environment=VMCTL_CATALOG_CATALOG_PATH=/srv/vmctl/catalog/catalog.yaml
 Environment=VMCTL_CATALOG_API_PORT=8090
+# The baked zip is multi-GB; /tmp is tmpfs (RAM) on current Debian, so bake under /var/tmp.
+Environment=TMPDIR=/var/tmp/evmc-catalog
 
+ExecStartPre=+/usr/bin/install -d -o YOUR_USERNAME -g YOUR_USERNAME /var/tmp/evmc-catalog
 ExecStart=/path/to/exhibition-vm-controller/host-controller/.venv/bin/python -m vm_controller.catalog
 
 Restart=always
@@ -40,7 +43,7 @@ RestartSec=10
 
 # read-only over the drives; only needs to write the temp zip it streams
 ProtectSystem=strict
-ReadWritePaths=/tmp
+ReadWritePaths=/var/tmp/evmc-catalog
 PrivateTmp=true
 
 StandardOutput=journal

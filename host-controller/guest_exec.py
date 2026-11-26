@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run a command inside a VM via QEMU guest agent and print output."""
 
-import json
 import base64
+import json
 import subprocess
 import sys
 import time
@@ -59,8 +59,13 @@ def guest_exec(vm_name: str, cmd: str, timeout: int = 10) -> tuple[int, str, str
     return -1, "", "timeout"
 
 
+# Ceiling for the QGA read loop below: the guest decides how much it sends, so an uncapped
+# read buffers arbitrary guest data into host RAM (same guard as vmctl-core's backend).
+MAX_GUEST_READ_BYTES = 64 * 1024 * 1024
+
+
 def guest_read_file(vm_name: str, path: str) -> bytes:
-    """Read a file from the guest via guest-file-open/read/close."""
+    """Read a file from the guest via guest-file-open/read/close (capped, fail-closed)."""
     # Open
     result = subprocess.run(
         [
@@ -104,6 +109,11 @@ def guest_read_file(vm_name: str, path: str) -> bytes:
             r = json.loads(result.stdout)["return"]
             chunk = base64.b64decode(r.get("buf-b64", ""))
             data += chunk
+            if len(data) > MAX_GUEST_READ_BYTES:
+                raise RuntimeError(
+                    f"guest file {path!r} exceeds the "
+                    f"{MAX_GUEST_READ_BYTES // (1024 * 1024)} MiB guest-read cap"
+                )
             if r.get("eof", False) or not chunk:
                 break
     finally:

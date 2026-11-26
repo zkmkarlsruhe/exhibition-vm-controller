@@ -27,9 +27,8 @@ Config via env:
 import json
 import os
 
-from mitmproxy import ctx, http
-
 import archive_store
+from mitmproxy import ctx, http
 
 ARCHIVE = os.environ.get("CONS_ARCHIVE", "/archive")
 RECORD = os.environ.get("CONS_RECORD", "1") not in ("0", "false", "")
