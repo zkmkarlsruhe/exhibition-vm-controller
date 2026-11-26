@@ -238,9 +238,11 @@ for the in-guest agent.
 ### Installation
 
 ```bash
-# Clone repository
-git clone https://github.com/zkmkarlsruhe/exhibition-vm-controller
-cd exhibition-vm-controller/host-controller
+# Clone the vmctl superproject with its submodules: the controller depends on the
+# sibling vmctl-core (host-controller/pyproject.toml: path = "../../vmctl-core"),
+# so a clone of this repository alone cannot install.
+git clone --recurse-submodules https://github.com/zkmkarlsruhe/vmctl
+cd vmctl/exhibition-vm-controller/host-controller
 
 # Install dependencies
 poetry install

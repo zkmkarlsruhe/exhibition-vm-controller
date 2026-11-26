@@ -96,9 +96,13 @@ sudo systemctl status libvirtd
 
 ```bash
 cd ~
-git clone https://github.com/zkmkarlsruhe/exhibition-vm-controller
-cd exhibition-vm-controller
+git clone --recurse-submodules https://github.com/zkmkarlsruhe/vmctl
+cd vmctl/exhibition-vm-controller
 ```
+
+Clone the vmctl superproject, not this repository alone: the controller depends on the sibling
+`vmctl-core` (`host-controller/pyproject.toml`: `path = "../../vmctl-core"`), which the superproject
+places next to it.
 
 ## Step 2: Create and Configure the VM
 
@@ -220,7 +224,7 @@ AppleScript-based monitoring scripts are planned but not yet implemented.
 ### 5.1 Navigate to Host Controller Directory
 
 ```bash
-cd ~/exhibition-vm-controller/host-controller
+cd ~/vmctl/exhibition-vm-controller/host-controller
 ```
 
 ### 5.2 Install Dependencies
@@ -270,7 +274,7 @@ virsh qemu-agent-command YOUR_VM_NAME '{"execute":"guest-ping"}'
 ### 6.3 Start the Host Controller
 
 ```bash
-cd ~/exhibition-vm-controller/host-controller
+cd ~/vmctl/exhibition-vm-controller/host-controller
 poetry run python -m vm_controller.api
 ```
 
@@ -342,7 +346,7 @@ Add the following:
 unclutter -idle 5 &
 
 # Start the host controller
-cd ~/exhibition-vm-controller/host-controller
+cd ~/vmctl/exhibition-vm-controller/host-controller
 poetry run python -m vm_controller.api &
 
 # Wait for VM to be ready
@@ -473,7 +477,7 @@ If host has no internet access:
 
 **Start controller**:
 ```bash
-cd ~/exhibition-vm-controller/host-controller
+cd ~/vmctl/exhibition-vm-controller/host-controller
 poetry run python -m vm_controller.api
 ```
 
