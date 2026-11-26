@@ -31,7 +31,7 @@ When errors occur (crashes, frozen windows, timeout, manual shutdowns), the syst
 - All recovery operations revert to the known-good snapshot state, preventing configuration drift
 
 **Multiple Recovery Triggers**:
-- Heartbeat timeout (no signal from guest for 15 seconds)
+- Heartbeat timeout (no signal from guest for 10 seconds)
 - VM shutdown detection (manual or unexpected)
 - QEMU guest agent unresponsive (optional)
 - Application-specific error signals from guest scripts
@@ -158,7 +158,7 @@ Artwork-specific logic lives in plugins that hook into the core:
 - **Lifecycle Hooks**: Pre/post restart hooks, startup/shutdown hooks
 - **Web Serving**: Serve artwork-specific content (HTML, assets, etc.)
 
-Plugins auto-load from the `plugins/` directory. See `plugins/README.md` for details.
+Plugins auto-load from the `host-controller/plugins/` directory. See [`host-controller/plugins/README.md`](host-controller/plugins/README.md) for details.
 
 ### Modular Guest Scripts
 
@@ -223,7 +223,7 @@ for the in-guest agent.
 **Host System**:
 - Linux (tested on Ubuntu 22.04, Debian 12)
 - KVM/QEMU and libvirt installed
-- Python 3.10+
+- Python 3.11+
 - Poetry for Python dependency management
 - Openbox window manager
 - virt-viewer for VM display
@@ -298,40 +298,40 @@ See `docs/getting-started.md` for detailed setup instructions.
 
 ### Check VM Status
 ```bash
-curl http://localhost:8002/api/v1/status
+curl http://localhost:8000/api/v1/status
 ```
 
 ### Plugin State
 ```bash
 # Get aggregated state from all plugins
-curl http://localhost:8002/api/v1/state
+curl http://localhost:8000/api/v1/state
 
 # Send a signal to plugin handlers
-curl http://localhost:8002/api/v1/signal/reset
+curl http://localhost:8000/api/v1/signal/reset
 
 # Poll a resource
-curl http://localhost:8002/api/v1/poll/button
+curl http://localhost:8000/api/v1/poll/button
 ```
 
 ### Enable/Disable Auto-Revert
 ```bash
 # Disable automatic revert (for maintenance)
-curl http://localhost:8002/api/v1/revert/disable
+curl http://localhost:8000/api/v1/revert/disable
 
 # Enable automatic revert
-curl http://localhost:8002/api/v1/revert/enable
+curl http://localhost:8000/api/v1/revert/enable
 ```
 
 ### Manage Snapshots
 ```bash
 # Create new snapshot
-curl 'http://localhost:8002/api/v1/snapshot/create?snapshot_name=ready'
+curl 'http://localhost:8000/api/v1/snapshot/create?snapshot_name=ready'
 
 # List snapshots
-curl http://localhost:8002/api/v1/snapshots
+curl http://localhost:8000/api/v1/snapshots
 
 # Manual revert
-curl http://localhost:8002/api/v1/vm/restart
+curl http://localhost:8000/api/v1/vm/restart
 ```
 
 ## Use Cases
@@ -353,7 +353,7 @@ This framework was developed for and tested with:
 
 - **OS**: Linux (tested on Ubuntu 22.04, Debian 12)
 - **Virtualization**: libvirt + QEMU/KVM
-- **Python**: 3.10+
+- **Python**: 3.11+
 - **Window Manager**: Openbox (for presentation mode)
 - **VM Display**: virt-viewer with --kiosk option
 - **Network**: Internal network between host and guest VMs
@@ -396,6 +396,18 @@ This system has been tested in production exhibition environments:
 - **Scale**: 12 VMs running simultaneously
 - **Uptime**: No manual intervention required during exhibition hours
 - **Reliability**: Automatic recovery from all observed failure modes
+
+## Part of the vmctl family
+
+An artwork flows **analysis → workbench → exhibition**:
+
+1. **Analysis** — [`artwork-autopsy`](https://github.com/zkmkarlsruhe/artwork-autopsy) works out what the artwork is and what it needs to run.
+2. **Workbench** — [`research-vm-controller`](https://github.com/zkmkarlsruhe/research-vm-controller) revives it in a period VM.
+3. **Exhibition** — [`exhibition-vm-controller`](https://github.com/zkmkarlsruhe/exhibition-vm-controller) (this repo) runs a self-healing exhibition copy.
+
+This controller depends on the shared library [`vmctl-core`](https://github.com/zkmkarlsruhe/vmctl-core) (bundle format) and receives finished works from the research workbench as promotion bundles (see [`docs/exhibition-handoff.md`](docs/exhibition-handoff.md)).
+
+Superproject with the family repositories as submodules: [`zkmkarlsruhe/vmctl`](https://github.com/zkmkarlsruhe/vmctl) · project site: [vmctl.org](https://vmctl.org)
 
 ## License
 
@@ -444,9 +456,6 @@ This software was created within the framework of the exhibition *Choose Your Fi
 **Curated by**: Laura C. Schmidt, Inge Hinterwaldner, and Daniela Hönigsberg. Curatorial intern: Anna Feil.
 
 Special thanks to ZKM for the opportunity to conduct this research and develop the methods described here, and to Rhizome for pioneering work in digital art preservation and emulation-based conservation.
-
----
-
 
 ---
 

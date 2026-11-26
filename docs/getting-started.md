@@ -28,7 +28,7 @@ sudo apt install -y \
     bridge-utils \
     virt-manager \
     virt-viewer \
-    python3.10 \
+    python3 \
     python3-pip \
     openbox \
     git

@@ -15,7 +15,7 @@ This is the host controller component that runs on the physical Linux host machi
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.11 or higher
 - Poetry for dependency management
 - libvirt-clients (provides `virsh` command)
 - QEMU/KVM with an active VM configured with QEMU guest agent

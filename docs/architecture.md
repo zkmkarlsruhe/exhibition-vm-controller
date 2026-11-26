@@ -253,7 +253,7 @@ For a 20-artwork exhibition, this means 20 physical hosts but shared VM template
 - OS: Ubuntu 22.04 LTS / Debian 12
 - Virtualization: QEMU 6.2+ with KVM
 - VM Management: libvirt 8.0+
-- Language: Python 3.10+
+- Language: Python 3.11+
 - Framework: FastAPI
 - Process Manager: systemd
 - Display: Openbox + virt-viewer
