@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Documentation corrected (2026-11-26)** - README and `docs/` now match the code: heartbeat timeout default 10 s
+  (`vm_controller/config.py`), API port 8000, Python 3.11+. The quickstart clones the `vmctl` superproject with
+  submodules so the `vmctl-core` path dependency resolves, and the sudoers drop-in is installed after cloning and
+  checked with `visudo -cf`.
+
 ### Planned
 - Support for Mac OS 9 guest monitoring scripts (AppleScript-based)
 - Support for Linux guest monitoring scripts (shell script-based)
@@ -306,7 +312,7 @@ If you were using development versions of this software:
 3. **Dependencies**:
    - Now managed via Poetry
    - Run `poetry install` to set up dependencies
-   - Python 3.10+ is required
+   - Python 3.11+ is required (the shared `vmctl-core` library requires >=3.11)
 
 4. **Guest Scripts**:
    - Scripts are now located in `guest-scripts/windows-xp/`

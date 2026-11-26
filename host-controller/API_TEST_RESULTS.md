@@ -1,6 +1,11 @@
 # Exhibition VM Controller - API Test Results
 
 **Test Date**: 2025-12-13
+
+> Historical record of the run on 2025-12-13. The values below, including `heartbeat_timeout: 15.0`, are the
+> configuration of that run. Current defaults differ: `heartbeat_timeout` 10.0 s (`vm_controller/config.py`),
+> Python 3.11+.
+
 **VM**: winxp-demo
 **Snapshot**: ready
 **API Version**: 0.1.0
