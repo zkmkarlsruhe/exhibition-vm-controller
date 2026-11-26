@@ -70,20 +70,6 @@ sudo usermod -a -G kvm $USER
 
 Log out and log back in for changes to take effect.
 
-**Passwordless sudo for the conntrack flush:** after a snapshot revert the
-controller flushes stale conntrack entries so the guest can talk to the host
-again. This needs a scoped `NOPASSWD` sudoers rule — install the drop-in:
-
-```bash
-sudo cp deployment/sudoers.d/exhibition-vm-controller /etc/sudoers.d/
-sudo sed -i "s/YOUR_USERNAME/$USER/" /etc/sudoers.d/exhibition-vm-controller
-sudo chmod 0440 /etc/sudoers.d/exhibition-vm-controller
-```
-
-Without it the flush is skipped (the guest may be unreachable for a minute after
-each recovery). The same drop-in also grants the optional transparent-mode
-`iptables` rule used by the conservation toolkit.
-
 ### 1.3 Start libvirt Service
 
 ```bash
@@ -103,6 +89,27 @@ cd vmctl/exhibition-vm-controller
 Clone the vmctl superproject, not this repository alone: the controller depends on the sibling
 `vmctl-core` (`host-controller/pyproject.toml`: `path = "../../vmctl-core"`), which the superproject
 places next to it.
+
+### 1.5 Allow the conntrack flush (sudoers)
+
+**Passwordless sudo for the conntrack flush:** after a snapshot revert the
+controller flushes stale conntrack entries so the guest can talk to the host
+again. This needs a scoped `NOPASSWD` sudoers rule — install the drop-in from the cloned repository:
+
+```bash
+cd ~/vmctl/exhibition-vm-controller
+sudo cp deployment/sudoers.d/exhibition-vm-controller /etc/sudoers.d/
+sudo sed -i "s/YOUR_USERNAME/$USER/" /etc/sudoers.d/exhibition-vm-controller
+sudo chmod 0440 /etc/sudoers.d/exhibition-vm-controller
+sudo visudo -cf /etc/sudoers.d/exhibition-vm-controller
+```
+
+The last command checks the file; it must print `parsed OK`. If it does not, remove the file
+(`sudo rm /etc/sudoers.d/exhibition-vm-controller`) before closing the terminal.
+
+Without this rule the flush is skipped (the guest may be unreachable for a minute after
+each recovery). The same drop-in also grants the optional transparent-mode
+`iptables` rule used by the conservation toolkit.
 
 ## Step 2: Create and Configure the VM
 
