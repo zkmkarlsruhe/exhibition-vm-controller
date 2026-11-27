@@ -123,7 +123,7 @@ First create the venv:
 cd /path/to/exhibition-vm-controller/host-controller
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt  # or use poetry export
+poetry install --no-root  # installs into the active venv
 ```
 
 ### Method 3: System Python

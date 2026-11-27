@@ -100,7 +100,7 @@ poetry install
 # If still fails, use venv directly
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt  # if available
+poetry install --no-root  # installs into the active venv
 ```
 
 ---

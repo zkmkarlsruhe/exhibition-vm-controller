@@ -1,0 +1,11 @@
+{
+  "exclude": [],
+  "baseline": {
+    "host-controller/tests/test_importer.py::_baked_multi_zip": 104,
+    "host-controller/vm_controller/api.py": 1013,
+    "host-controller/vm_controller/api.py::lifespan": 162,
+    "host-controller/vm_controller/importer.py::import_bundle": 213,
+    "host-controller/vm_controller/vm_manager.py": 1028,
+    "host-controller/vm_controller/vm_manager.py::VMManager": 723
+  }
+}

@@ -13,7 +13,7 @@ appears here — nothing is pushed anywhere.
 
 Each entry downloads as ONE self-contained (fat) zip: a thin bundle (overlay +
 base ref, the drive default) is fattened on the way out by resolving the golden
-base from the catalog. A field exhibition host then runs ``evmctl import
+base from the catalog. A field exhibition host then runs ``evmctl-import
 <zip>`` to materialize everything. This module is READ-ONLY over the drives root
 — it never mutates a bundle.
 
@@ -273,7 +273,7 @@ def _render_shelf(bundles: list[dict]) -> str:
 </style></head><body>
 <h1>evmc catalog &mdash; finished artworks</h1>
 <p>Each row is a promoted artwork on the shared drives. Download the self-contained
-zip and run <code>evmctl import &lt;zip&gt;</code> on the exhibition host.</p>
+zip and run <code>evmctl-import &lt;zip&gt;</code> on the exhibition host.</p>
 <table>
 <tr><th>artwork</th><th>version</th><th>vm</th><th>size</th><th>integrity</th><th></th><th>origin</th></tr>
 {body}

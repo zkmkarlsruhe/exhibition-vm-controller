@@ -1,6 +1,6 @@
 # The exhibition handoff — from a revived VM to a running exhibition
 
-Research (rvmc) revives an artwork as a VM; exhibition (evmc) runs it unattended
+Research (rvmc) revives an artwork as a VM; exhibition (evmctl) runs it unattended
 on a dedicated machine. This is the seam between them (research/29 §8). It has two
 ends, both built on one checksum-signed bundle format (`vmctl_core.promotion`), so
 the two sides agree by construction and can't drift.
@@ -18,7 +18,7 @@ the two sides agree by construction and can't drift.
                                                          │   standalone image)
                                     scp / USB stick to the exhibition host
                                                          ▼
- evmc-import (on the dedicated exhibition host):
+ evmctl-import (on the dedicated exhibition host):
    evmctl-import artwork.zip
    └─ verify → place disk → virsh define → ready snapshot → install plugin
       → write config → load conservation archive
@@ -77,7 +77,7 @@ python -m vm_controller.catalog       # or: evmctl-catalog
 
 See `deployment/systemd/evmc-catalog.service`.
 
-## evmc-import (the exhibition host)
+## evmctl-import (the exhibition host)
 
 The importer defines the domain in `VMCTL_IMPORT_LIBVIRT_URI` (default `qemu:///system`). This
 **must** be the libvirt the runtime controller connects to. Without an explicit `-c`, `virsh`

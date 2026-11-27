@@ -397,12 +397,14 @@ Key configurable values (all adjustable in `config.yaml`):
 |-----------|---------|-------------|
 | `vm_name` | - | Name of the VM in libvirt |
 | `snapshot_name` | "ready" | Name of the reference snapshot |
-| `heartbeat_interval` | 1s | How often guest sends heartbeat |
 | `heartbeat_timeout` | 10s | When host considers guest dead |
-| `idle_timeout` | 12-15min | Inactivity before auto-reset |
 | `auto_revert_enabled` | true | Enable automatic revert on failure |
 | `api_port` | 8000 | REST API port |
 | `check_qemu_agent` | true | Verify VM via QEMU guest agent (set to false if agent not installed) |
+
+`config.yaml` accepts only the controller's own keys; unknown keys are rejected at startup.
+The heartbeat interval (default 1s) and the idle timeout (default 15min) are set in the
+guest scripts, not here: see [guest-scripts/](guest-scripts/).
 
 ## Documentation
 
@@ -444,7 +446,7 @@ MIT License - See [LICENSE](LICENSE) file for details.
 ## Contributing
 
 Contributions are welcome, especially for:
-- Additional guest OS examples (Mac OS 9, older Windows versions)
+- Additional guest OS examples (older Windows versions, other classic systems)
 - Improved error detection strategies
 - Documentation improvements
 - Additional virtualization backends

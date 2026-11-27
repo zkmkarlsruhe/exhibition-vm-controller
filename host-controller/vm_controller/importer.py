@@ -1,4 +1,4 @@
-"""evmc-import — the field end of the handoff: ``evmctl import <artwork.zip>``.
+"""evmctl-import — the field end of the handoff: ``evmctl-import <artwork.zip>``.
 
 A dedicated exhibition host receives ONE baked zip (from the catalog) and this
 turns it into a running-ready libvirt VM in one command. The zip is

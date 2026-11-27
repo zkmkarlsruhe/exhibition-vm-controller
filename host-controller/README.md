@@ -39,7 +39,7 @@ sudo pacman -S libvirt
 
 ```bash
 # Install Poetry if not already installed
-curl -sSL https://install.python.org/poetry.py | python3 -
+curl -sSL https://install.python-poetry.org | python3 -
 
 # Install dependencies
 poetry install --no-root
@@ -173,10 +173,10 @@ poetry run pytest
 
 ```bash
 # Format code
-poetry run black vm_controller/
+poetry run ruff format vm_controller/
 
 # Lint
-poetry run ruff vm_controller/
+poetry run ruff check vm_controller/
 
 # Type checking
 poetry run mypy vm_controller/

@@ -45,3 +45,16 @@ update-superproject:
       --form "variables[SUBMODULE]=exhibition-vm-controller"
       --form "variables[SHA]=${CI_COMMIT_SHA}"
       "https://git.zkm.de/api/v4/projects/1357/trigger/pipeline"
+
+# Size gate: file/function/class limits; existing violations are frozen in .size-limits.json
+# and may only shrink. Rules: https://docs.vmctl.org/contributing/engineering/
+size-gate:
+  stage: check
+  image: $CI_REGISTRY/dockerhub-cache/library/python:3.14
+  needs: []
+  script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - python3 scripts/check_sizes.py
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

@@ -486,7 +486,7 @@ virsh snapshot-create-as your-vm-name ready
 **Cause**: Timeouts too aggressive or scripts crashing
 
 **Solution**:
-1. Increase heartbeat timeout on host (default 15s)
+1. Increase heartbeat timeout on host (`heartbeat_timeout`, default 10s)
 2. Check scripts for errors in Event Log
 3. Increase idle threshold if resetting too soon
 4. Review host controller logs for patterns

@@ -256,11 +256,16 @@ Edit `config.yaml`:
 vm_name: "my-artwork-vm"  # Must match VM name in virt-manager
 snapshot_name: "ready"
 heartbeat_timeout: 10
-idle_timeout: 720  # 12 minutes in seconds
 auto_revert_enabled: true
 api_port: 8000
 check_qemu_agent: true
 ```
+
+The idle timeout and the heartbeat interval are not `config.yaml` keys: they are
+constants in the guest scripts (`idleThresholdSeconds` / `heartbeatInterval` in the
+Mac OS 9 AppleScripts, `$IDLE_TIME_THRESHOLD` / the `Sleep(1000)` loop in the
+Windows XP AutoIt scripts). `Config` rejects unknown keys, so adding `idle_timeout`
+here stops the controller from starting.
 
 ## Step 6: Create the "Ready" Snapshot
 
