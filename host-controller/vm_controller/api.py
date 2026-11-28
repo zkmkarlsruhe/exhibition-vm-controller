@@ -19,7 +19,6 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, status
@@ -33,6 +32,7 @@ from vm_controller.config import Config
 from vm_controller.heartbeat_monitor import HeartbeatMonitor
 from vm_controller.plugins import PluginRegistry
 from vm_controller.vm_manager import VMManager
+from vm_controller.vm_names import validate_vm_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -178,9 +178,9 @@ def _require_from_vm(request: Request) -> None:
 
 
 # Global state
-vm_manager: Optional[VMManager] = None
-heartbeat_monitor: Optional[HeartbeatMonitor] = None
-config: Optional[Config] = None
+vm_manager: VMManager | None = None
+heartbeat_monitor: HeartbeatMonitor | None = None
+config: Config | None = None
 
 
 def _cfg() -> Config:
@@ -192,13 +192,13 @@ def _cfg() -> Config:
     return config
 
 
-plugin_registry: Optional[PluginRegistry] = None
+plugin_registry: PluginRegistry | None = None
 config_path: Path = Path(os.environ.get("VMCTL_CONFIG", "config.yaml"))
 
 # Tracks the deferred "enable heartbeat monitoring after boot delay" task so an operator
 # /vm/stop can cancel it before it fires — otherwise a stop during the delay would be silently
 # overridden by the pending enable and the intentionally-stopped exhibit would get restarted.
-_delayed_enable_task: Optional[asyncio.Task] = None
+_delayed_enable_task: asyncio.Task | None = None
 
 
 def _cancel_delayed_enable() -> None:
@@ -220,7 +220,7 @@ class StatusResponse(BaseModel):
     snapshot_exists: bool
     heartbeat: dict
     auto_revert_enabled: bool
-    probe: Optional[dict] = None
+    probe: dict | None = None
 
 
 class SnapshotInfo(BaseModel):
@@ -241,7 +241,7 @@ class MessageResponse(BaseModel):
     """Generic message response."""
 
     message: str
-    details: Optional[dict] = None
+    details: dict | None = None
 
 
 async def _host_liveness_loop() -> None:
@@ -521,8 +521,8 @@ async def get_status() -> StatusResponse:
         logger.error(f"Error getting status: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error getting status: {str(e)}",
-        )
+            detail=f"Error getting status: {e!s}",
+        ) from e
 
 
 @app.get("/api/v1/heartbeat", response_model=MessageResponse)
@@ -600,8 +600,8 @@ async def start_vm(request: Request) -> MessageResponse:
             heartbeat_monitor.enable()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error starting VM: {str(e)}",
-        )
+            detail=f"Error starting VM: {e!s}",
+        ) from e
 
 
 @app.get("/api/v1/vm/stop", response_model=MessageResponse)
@@ -640,8 +640,8 @@ async def stop_vm(request: Request) -> MessageResponse:
             heartbeat_monitor.enable()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error stopping VM: {str(e)}",
-        )
+            detail=f"Error stopping VM: {e!s}",
+        ) from e
 
 
 @app.get("/api/v1/vm/restart", response_model=MessageResponse)
@@ -728,8 +728,8 @@ async def restart_vm(request: Request) -> MessageResponse:
             heartbeat_monitor.enable()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error restarting VM: {str(e)}",
-        )
+            detail=f"Error restarting VM: {e!s}",
+        ) from e
 
 
 @app.get("/api/v1/snapshots", response_model=SnapshotListResponse)
@@ -753,13 +753,25 @@ async def list_snapshots() -> SnapshotListResponse:
         logger.error(f"Error listing snapshots: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error listing snapshots: {str(e)}",
-        )
+            detail=f"Error listing snapshots: {e!s}",
+        ) from e
+
+
+def _snapshot_manager(request: Request, snapshot_name: str | None) -> VMManager:
+    if not vm_manager:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "VM manager not initialized")
+    _deny_from_vm(request)
+    name = vm_manager.snapshot_name if snapshot_name is None else snapshot_name
+    try:
+        validate_vm_identifier(name, field="snapshot_name")
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return vm_manager
 
 
 @app.get("/api/v1/snapshot/create", response_model=MessageResponse)
 @app.post("/api/v1/snapshot/create", response_model=MessageResponse)
-async def create_snapshot(request: Request, snapshot_name: Optional[str] = None) -> MessageResponse:
+async def create_snapshot(request: Request, snapshot_name: str | None = None) -> MessageResponse:
     """
     Create a new snapshot (default: create/update the 'ready' snapshot).
 
@@ -768,28 +780,21 @@ async def create_snapshot(request: Request, snapshot_name: Optional[str] = None)
 
     Supports both GET and POST methods for compatibility with AutoIt and other tools.
     """
-    if not vm_manager:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="VM manager not initialized",
-        )
-
-    _deny_from_vm(request)
+    manager = _snapshot_manager(request, snapshot_name)
 
     try:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, vm_manager.create_snapshot, snapshot_name)
+        await asyncio.to_thread(manager.create_snapshot, snapshot_name)
 
-        name = snapshot_name or vm_manager.snapshot_name
+        name = snapshot_name or manager.snapshot_name
         return MessageResponse(
-            message=f"Snapshot '{name}' created successfully for VM '{vm_manager.vm_name}'",
+            message=f"Snapshot '{name}' created successfully for VM '{manager.vm_name}'",
         )
     except Exception as e:
         logger.error(f"Error creating snapshot: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating snapshot: {str(e)}",
-        )
+            detail=f"Error creating snapshot: {e!s}",
+        ) from e
 
 
 @app.get("/api/v1/snapshot/delete/{snapshot_name}", response_model=MessageResponse)
@@ -801,17 +806,10 @@ async def delete_snapshot(request: Request, snapshot_name: str) -> MessageRespon
     Supports both GET (at /api/v1/snapshot/delete/{name}) and DELETE (at
     /api/v1/snapshot/{name}).
     """
-    if not vm_manager:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="VM manager not initialized",
-        )
-
-    _deny_from_vm(request)
+    manager = _snapshot_manager(request, snapshot_name)
 
     try:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, vm_manager.delete_snapshot, snapshot_name)
+        await asyncio.to_thread(manager.delete_snapshot, snapshot_name)
 
         return MessageResponse(
             message=f"Snapshot '{snapshot_name}' deleted successfully",
@@ -820,8 +818,8 @@ async def delete_snapshot(request: Request, snapshot_name: str) -> MessageRespon
         logger.error(f"Error deleting snapshot: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting snapshot: {str(e)}",
-        )
+            detail=f"Error deleting snapshot: {e!s}",
+        ) from e
 
 
 @app.get("/api/v1/revert/enable", response_model=MessageResponse)
@@ -904,7 +902,7 @@ async def sse_events(request: Request) -> StreamingResponse:
                 try:
                     event, data = await asyncio.wait_for(queue.get(), timeout=30)
                     yield f"event: {event}\ndata: {data}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
         finally:
             plugin_registry.sse_disconnect(queue)
@@ -991,10 +989,8 @@ def main() -> None:
     os.environ["VMCTL_CONFIG"] = str(args.config)
     config_path = args.config
 
-    if config_path.exists():
-        cfg = Config.from_yaml(config_path)
-    else:
-        cfg = Config()  # type: ignore[call-arg]  # see lifespan(): env-sourced vm_name
+    # Config() without a file: see lifespan(), vm_name is env-sourced
+    cfg = Config.from_yaml(config_path) if config_path.exists() else Config()  # type: ignore[call-arg]
 
     cfg.configure_logging()
 

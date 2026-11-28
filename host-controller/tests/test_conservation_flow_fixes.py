@@ -7,10 +7,10 @@ responses) is a one-line status gate.
 
 import importlib.util
 import subprocess
-import types
 from pathlib import Path
 
 import pytest
+from vmctl_core.backends import BackendError
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -64,7 +64,7 @@ def test_legacy_agent_windows_only_tools_give_clear_error_off_windows():
 
 
 def test_archive_paths_neutralise_dotdot_in_path(tmp_path):
-    body, meta = archive_store.paths(str(tmp_path), "evil.example", "/../../etc/passwd")
+    body, _meta = archive_store.paths(str(tmp_path), "evil.example", "/../../etc/passwd")
     root = tmp_path.resolve()
     assert ".." not in Path(body).parts  # traversal token neutralised, not carried through
     assert str(root) in str(Path(body).resolve())  # stays confined under the archive root
@@ -159,16 +159,16 @@ def test_guest_read_file_closes_handle_on_read_error(monkeypatch):
     seen = []
 
     def fake_run(cmd, *a, **kw):
-        payload = cmd[3] if len(cmd) > 3 else ""
+        payload = cmd[-1]
         seen.append(payload)
         if '"guest-file-open"' in payload:
-            return types.SimpleNamespace(stdout='{"return": 7}')
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"return": 7}')
         if '"guest-file-read"' in payload:
-            raise subprocess.CalledProcessError(1, cmd, output="", stderr="boom")
-        return types.SimpleNamespace(stdout='{"return": {}}')
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"return": {}}')
 
-    monkeypatch.setattr(guest_exec.subprocess, "run", fake_run)
-    with pytest.raises(subprocess.CalledProcessError):
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(BackendError, match="boom"):
         guest_exec.guest_read_file("vm", "C:/x")
     assert any('"guest-file-close"' in p for p in seen)  # handle released despite the read error
 
@@ -181,15 +181,15 @@ def test_guest_write_file_closes_handle_on_write_error(monkeypatch, tmp_path):
     seen = []
 
     def fake_run(cmd, *a, **kw):
-        payload = cmd[3] if len(cmd) > 3 else ""
+        payload = cmd[-1]
         seen.append(payload)
         if '"guest-file-open"' in payload:
-            return types.SimpleNamespace(stdout='{"return": 7}')
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"return": 7}')
         if '"guest-file-write"' in payload:
-            raise subprocess.CalledProcessError(1, cmd, output="", stderr="boom")
-        return types.SimpleNamespace(stdout='{"return": {}}')
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"return": {}}')
 
-    monkeypatch.setattr(guest_upload.subprocess, "run", fake_run)
-    with pytest.raises(subprocess.CalledProcessError):
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(BackendError, match="boom"):
         guest_upload.guest_write_file("vm", "C:/x", str(local))
     assert any('"guest-file-close"' in p for p in seen)

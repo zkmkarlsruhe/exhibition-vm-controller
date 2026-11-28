@@ -16,7 +16,7 @@ import socket
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # guest_ip.py
-import guest_ip  # noqa: E402
+import guest_ip
 
 
 def resolve_agent_ip(vm):
@@ -56,9 +56,10 @@ def main():
     args = ap.parse_args()
 
     try:
-        pem = open(args.ca).read()
+        with open(args.ca) as f:
+            pem = f.read()
     except OSError as e:
-        sys.exit("cannot read CA %s: %s (run the proxy once to generate it)" % (args.ca, e))
+        sys.exit(f"cannot read CA {args.ca}: {e} (run the proxy once to generate it)")
 
     if args.agent:
         ip, _, port = args.agent.partition(":")
@@ -67,11 +68,11 @@ def main():
         ip = resolve_agent_ip(args.vm)
         port = 9009
         if not ip:
-            sys.exit("could not resolve guest agent IP for %r (VM off? agent down?)" % args.vm)
+            sys.exit(f"could not resolve guest agent IP for {args.vm!r} (VM off? agent down?)")
     else:
         sys.exit("need --vm or --agent")
 
-    print("installing mitmproxy CA into %s:%d (scope=%s)..." % (ip, port, args.scope))
+    print(f"installing mitmproxy CA into {ip}:{port} (scope={args.scope})...")
     res = agent_call(ip, port, "install_cert", {"pem": pem, "scope": args.scope})
     print(res["content"][0]["text"])
     sys.exit(1 if res.get("isError") else 0)

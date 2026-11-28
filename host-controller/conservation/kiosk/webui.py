@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # guest_ip.py
-import guest_ip  # noqa: E402,I001
+import guest_ip
 import hosts as HOSTS
 import recipes as R
 
@@ -90,7 +90,8 @@ class H(BaseHTTPRequestHandler):
                 ["virsh", "screenshot", VM, tmp], capture_output=True, text=True, timeout=30
             )
             if os.path.exists(tmp):
-                data = open(tmp, "rb").read()
+                with open(tmp, "rb") as f:
+                    data = f.read()
                 os.remove(tmp)
                 self._send(200, "image/png", data)
             else:
@@ -241,18 +242,19 @@ def main():
     elif args.vm:
         ip = resolve_ip(args.vm)
         if not ip:
-            sys.exit("could not resolve agent IP for %r" % args.vm)
+            sys.exit(f"could not resolve agent IP for {args.vm!r}")
         AGENT = R.Agent(ip)
     else:
         sys.exit("need --vm or --agent")
     try:
-        CA_PEM = open(args.ca).read()
+        with open(args.ca) as f:
+            CA_PEM = f.read()
     except OSError:
         CA_PEM = None
 
     print(
-        "kiosk-hygiene panel on http://%s:%d  (vm=%s, agent=%s:%d)"
-        % (args.host, args.port, VM, AGENT.ip, AGENT.port),
+        f"kiosk-hygiene panel on http://{args.host}:{args.port}  "
+        f"(vm={VM}, agent={AGENT.ip}:{AGENT.port})",
         file=sys.stderr,
     )
     ThreadingHTTPServer((args.host, args.port), H).serve_forever()

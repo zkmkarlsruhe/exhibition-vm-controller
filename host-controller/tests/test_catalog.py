@@ -87,7 +87,7 @@ def env(tmp_path):
 
 
 def test_scan_finds_promoted_bundle(env):
-    cfg, drives, _ = env
+    cfg, _drives, _ = env
     items = scan(cfg.drives_root, deep=True)
     assert len(items) == 1
     e = items[0]
@@ -107,7 +107,7 @@ def test_list_endpoint(env):
 
 
 def test_download_bakes_thin_bundle(env, tmp_path):
-    cfg, drives, base_sha = env
+    cfg, drives, _base_sha = env
     c = TestClient(create_app(cfg))
     r = c.get("/api/v1/catalog/artwork-alpha/work-1.0.0/download.zip")
     assert r.status_code == 200

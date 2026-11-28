@@ -38,7 +38,7 @@ LOGFILE = os.environ.get("CONS_LOG", "")
 
 
 def _log(flow, disposition):
-    line = "%s %s -> %s" % (flow.request.method, flow.request.pretty_url, disposition)
+    line = f"{flow.request.method} {flow.request.pretty_url} -> {disposition}"
     ctx.log.info("[conserve] " + line)
     if LOGFILE:
         try:
@@ -67,7 +67,7 @@ class ServeArchive:
                 hit["body"],
                 {"Content-Type": hit["content_type"], "X-Conserved": "archive"},
             )
-            _log(flow, "archive (%d, %d bytes)" % (hit["status"], len(hit["body"])))
+            _log(flow, f"archive ({hit['status']}, {len(hit['body'])} bytes)")
             return
         if not PASSTHRU:
             flow.response = http.Response.make(
@@ -75,7 +75,7 @@ class ServeArchive:
                 b"conserved: no archive entry for this request\n",
                 {"Content-Type": "text/plain", "X-Conserved": "stub"},
             )
-            _log(flow, "stub %d (no archive, passthrough off)" % STUB)
+            _log(flow, f"stub {STUB} (no archive, passthrough off)")
 
     def response(self, flow: http.HTTPFlow):
         if flow.response.headers.get("X-Conserved"):
@@ -86,7 +86,7 @@ class ServeArchive:
         # real asset (the archive is served on hit with no re-validation). Only record success /
         # redirects (< 400); leave error responses un-archived so a later good response wins.
         recordable = RECORD and status < 400
-        _log(flow, "live %d%s" % (status, " (recorded)" if recordable else ""))
+        _log(flow, f"live {status}{' (recorded)' if recordable else ''}")
         if not recordable:
             return
         try:
@@ -99,7 +99,7 @@ class ServeArchive:
                 flow.response.content,
             )
         except OSError as e:
-            ctx.log.warn("[conserve] could not record: %s" % e)
+            ctx.log.warn(f"[conserve] could not record: {e}")
 
 
 addons = [ServeArchive()]

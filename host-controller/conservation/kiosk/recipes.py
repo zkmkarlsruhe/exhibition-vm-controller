@@ -371,7 +371,7 @@ def run(ag, recipe, op, params=None, ca_pem=None):
             text=True,
             timeout=20,
         )
-        out.append("%s: %s" % (sub, (r.stdout.strip() or r.stderr.strip() or "ok")))
+        out.append("{}: {}".format(sub, (r.stdout.strip() or r.stderr.strip() or "ok")))
         return out
 
     if recipe["id"] == "install_ca":
@@ -380,7 +380,7 @@ def run(ag, recipe, op, params=None, ca_pem=None):
             out.append(
                 "install_cert: "
                 + (
-                    "OK %s" % res.get("thumbprint")
+                    "OK {}".format(res.get("thumbprint"))
                     if isinstance(res, dict) and res.get("installed")
                     else "FAILED"
                 )
@@ -418,8 +418,9 @@ def run(ag, recipe, op, params=None, ca_pem=None):
                     },
                 )
             out.append(
-                "%s\\%s = %s"
-                % (e["hive"], e["value"] or "(default)", "FAILED: %s" % r if err else "ok")
+                "{}\\{} = {}".format(
+                    e["hive"], e["value"] or "(default)", f"FAILED: {r}" if err else "ok"
+                )
             )
         return out
 
@@ -427,11 +428,13 @@ def run(ag, recipe, op, params=None, ca_pem=None):
         cmds = recipe[op]
         cmd = cmds.get(fam) or cmds.get("all")
         if not cmd:
-            return ["(no command for %s)" % fam]
+            return [f"(no command for {fam})"]
         r, err = ag.call("run_shell", {"command": cmd, "timeout": 30})
         msg = (r.get("stderr") or r.get("stdout") or "").strip() if isinstance(r, dict) else str(r)
         out.append(
-            "%s: exit %s %s" % (op, r.get("exit_code") if isinstance(r, dict) else "?", msg[:120])
+            "{}: exit {} {}".format(
+                op, r.get("exit_code") if isinstance(r, dict) else "?", msg[:120]
+            )
         )
         return out
 
@@ -442,7 +445,7 @@ def run(ag, recipe, op, params=None, ca_pem=None):
             if w.get("class") == "#32770":
                 ag.call("show_window", {"hwnd": w["hwnd"], "mode": "close"})
                 n += 1
-        out.append("closed %d dialog(s)" % n)
+        out.append(f"closed {n} dialog(s)")
         return out
 
     return ["(nothing to do)"]

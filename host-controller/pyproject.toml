@@ -71,27 +71,16 @@ line-length = 100
 target-version = "py311"  # matches requires-python; py310 was left over from before the core dep
 
 [tool.ruff.lint]
-# ruff moved select/ignore under [tool.ruff.lint] in 0.2 — they were silently ignored here since.
-select = ["E", "F", "I", "N", "W"]
-ignore = []
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF", "TID"]  # shared vmctl baseline, see docs.vmctl.org/contributing/engineering/
+ignore = ["E501"]  # line length is the formatter's job
 
 [tool.ruff.lint.per-file-ignores]
-# conservation/ is operator tooling ported from elsewhere, not the controller package. Two rules
-# fire on it for reasons that are not defects:
-#   N806/N812 — the legacy in-guest agent mirrors Win32 names (EnumProc, SM_CXVIRTUALSCREEN) and
-#     the kiosk UI aliases modules the way its templates read; renaming them to satisfy a linter
-#     would make them harder to check against the API they mirror.
-#   E501 — recipe/description strings that read worse wrapped than long.
-"conservation/guest_agent/*" = ["N806", "N812", "E501"]
-"conservation/kiosk/*" = ["N806", "N812", "E501"]
-"conservation/proxy/*" = ["N806", "N812", "E501"]
-"conservation/traffic_webui.py" = ["N806", "N812", "E501"]
-# do_GET/do_HEAD/do_POST are BaseHTTPRequestHandler's dispatch names — renaming them turns the
-# handler off.
-"conservation/proxy/archive_server.py" = ["N806", "N812", "E501", "N815"]
-# The example plugin ships as `<name>.example.py` on purpose: a operator copies it and drops the
-# suffix. The dotted stem is not an importable module name, and is not meant to be.
-"plugins/*.example.py" = ["N999"]
+"tests/*" = ["B"]
+# runs inside Windows XP guests on Python 3.4: no pyupgrade rewrites (f-strings, PEP 604/585)
+"conservation/guest_agent/*" = ["UP"]
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.11"

@@ -26,7 +26,7 @@ import socket
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # guest_ip.py
-import guest_ip  # noqa: E402
+import guest_ip
 
 GUEST_CA = r"C:\zkm-proxy-ca.pem"
 ALIAS = "zkm-proxy"
@@ -79,11 +79,11 @@ class Agent:
 
 
 def do_windows(ag, pem, scope):
-    res, err = ag.call("install_cert", {"pem": pem, "scope": scope})
+    res, _err = ag.call("install_cert", {"pem": pem, "scope": scope})
     ok = isinstance(res, dict) and res.get("installed")
     print(
         "  Windows root : %s"
-        % ("OK (thumbprint %s)" % res.get("thumbprint") if ok else "FAILED %s" % res)
+        % ("OK (thumbprint {})".format(res.get("thumbprint")) if ok else f"FAILED {res}")
     )
 
 
@@ -104,16 +104,13 @@ def do_java(ag):
     for cc in cacerts:
         jre = ntpath.dirname(ntpath.dirname(ntpath.dirname(cc)))  # ...\lib\security\cacerts -> JRE
         keytool = jre + r"\bin\keytool.exe"
-        cmd = (
-            '"%s" -importcert -noprompt -trustcacerts -alias %s -file %s -keystore "%s" -storepass changeit'
-            % (keytool, ALIAS, GUEST_CA, cc)
-        )
+        cmd = f'"{keytool}" -importcert -noprompt -trustcacerts -alias {ALIAS} -file {GUEST_CA} -keystore "{cc}" -storepass changeit'
         r = ag.sh(cmd)
         msg = (r.get("stderr") or r.get("stdout") or "").strip().splitlines()
         ok = r.get("exit_code") == 0
-        print("  Java cacerts : %s  %s" % ("OK" if ok else "FAILED", cc))
+        print("  Java cacerts : {}  {}".format("OK" if ok else "FAILED", cc))
         if not ok and msg:
-            print("                 %s" % msg[0])
+            print(f"                 {msg[0]}")
 
 
 def do_nss(ag):
@@ -140,11 +137,13 @@ def do_nss(ag):
         cur, _ = ag.call("read_file", {"path": userjs})
         body = cur.get("text", "") if isinstance(cur, dict) else ""
         if PREF in body:
-            print("  NSS profile  : already set  %s" % prof)
+            print(f"  NSS profile  : already set  {prof}")
             continue
         new = body + ("\r\n" if body and not body.endswith("\n") else "") + PREF + "\r\n"
-        res, err = ag.call("write_file", {"path": userjs, "content": new})
-        print("  NSS profile  : %s (enterprise_roots) %s" % ("OK" if not err else "FAILED", prof))
+        _res, err = ag.call("write_file", {"path": userjs, "content": new})
+        print(
+            "  NSS profile  : {} (enterprise_roots) {}".format("OK" if not err else "FAILED", prof)
+        )
         print("                 note: needs Firefox 49+; older Mozilla needs NSS certutil")
 
 
@@ -160,9 +159,10 @@ def main():
     args = ap.parse_args()
 
     try:
-        pem = open(args.ca).read()
+        with open(args.ca) as f:
+            pem = f.read()
     except OSError as e:
-        sys.exit("cannot read CA %s: %s" % (args.ca, e))
+        sys.exit(f"cannot read CA {args.ca}: {e}")
 
     if args.agent:
         ip, _, port = args.agent.partition(":")
@@ -171,7 +171,7 @@ def main():
         ip = resolve_agent_ip(args.vm)
         port = 9009
         if not ip:
-            sys.exit("could not resolve guest agent IP for %r" % args.vm)
+            sys.exit(f"could not resolve guest agent IP for {args.vm!r}")
     else:
         sys.exit("need --vm or --agent")
 
@@ -179,7 +179,7 @@ def main():
     # stage the CA in the guest for keytool -file
     ag.call("write_file", {"path": GUEST_CA, "content": pem})
     stores = [s.strip() for s in args.stores.split(",") if s.strip()]
-    print("installing CA into %s on %s:%d" % ("+".join(stores), ip, port))
+    print(f"installing CA into {'+'.join(stores)} on {ip}:{port}")
     if "windows" in stores:
         do_windows(ag, pem, args.scope)
     if "java" in stores:

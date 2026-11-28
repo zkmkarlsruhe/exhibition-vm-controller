@@ -115,15 +115,7 @@ def test_every_virsh_call_passes_a_timeout(monkeypatch):
 
 
 def test_every_virsh_call_targets_the_configured_uri(monkeypatch):
-    """Direct shell-outs must name the SAME libvirt the shared backend talks to.
-
-    VMManager delegates most operations to vmctl_core's LibvirtBackend, which always passes
-    `-c <uri>`, but the staged golden-snapshot refresh and the USB/XML plumbing still shell out
-    themselves. A bare `virsh` there falls back to the caller's default URI — qemu:///session
-    for a non-root service user — where the domain does not exist, so a snapshot refresh dies
-    with "failed to get domain" while every delegated call on the same object works. Found on a
-    real libvirt host, invisible to a mocked test that never looks at the connection.
-    """
+    """A staged refresh must use the operator's URI for every step."""
     calls: list[list] = []
 
     def recording_run(cmd, *a, **kw):
@@ -138,7 +130,7 @@ def test_every_virsh_call_targets_the_configured_uri(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", recording_run)
 
-    vm = VMManager(vm_name="testvm", uri="qemu:///system")
+    vm = VMManager(vm_name="testvm", uri="test:///exhibition")
     calls.clear()
 
     vm.get_vm_state()
@@ -148,7 +140,7 @@ def test_every_virsh_call_targets_the_configured_uri(monkeypatch):
 
     virsh_calls = [c for c in calls if isinstance(c, list) and c[:1] == ["virsh"]]
     assert virsh_calls, "expected virsh calls to have been recorded"
-    unscoped = [c for c in virsh_calls if c[1:3] != ["-c", "qemu:///system"]]
+    unscoped = [c for c in virsh_calls if c[1:3] != ["-c", "test:///exhibition"]]
     assert not unscoped, f"virsh calls that would hit the caller's default URI: {unscoped}"
 
 

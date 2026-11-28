@@ -24,7 +24,7 @@ def _read(ag):
     if err:
         return "", err
     if not isinstance(out, dict):
-        return "", "unexpected read_file response: %r" % (out,)
+        return "", f"unexpected read_file response: {out!r}"
     return out.get("text", ""), None
 
 
@@ -53,7 +53,7 @@ def _write(ag, lines):
     body = "\r\n".join(lines).rstrip("\r\n") + "\r\n"
     res, err = ag.call("write_file", {"path": HOSTS_PATH, "content": body})
     if err:
-        return False, "write failed (need Administrator?): %s" % res
+        return False, f"write failed (need Administrator?): {res}"
     return True, "ok"
 
 
@@ -64,15 +64,15 @@ def add(ag, host, ip):
     current, err = _read(ag)
     if err:
         # Abort — never rewrite the hosts file from a failed/partial read (would clobber it).
-        return False, "read failed (need Administrator?): %s" % err
+        return False, f"read failed (need Administrator?): {err}"
     lines = [ln for ln in current.splitlines() if not _is_ours_for(ln, host)]
-    lines.append("%s %s %s" % (ip.strip(), host, TAG))
+    lines.append(f"{ip.strip()} {host} {TAG}")
     return _write(ag, lines)
 
 
 def remove(ag, host):
     current, err = _read(ag)
     if err:
-        return False, "read failed (need Administrator?): %s" % err
+        return False, f"read failed (need Administrator?): {err}"
     lines = [ln for ln in current.splitlines() if not _is_ours_for(ln, host)]
     return _write(ag, lines)

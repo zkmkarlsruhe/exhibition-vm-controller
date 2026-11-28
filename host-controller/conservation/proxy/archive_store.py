@@ -49,7 +49,8 @@ def lookup(archive_dir, host, rawpath):
     ctype = mimetypes.guess_type(body)[0] or "application/octet-stream"
     if os.path.isfile(meta):
         try:
-            m = json.load(open(meta))
+            with open(meta) as f:
+                m = json.load(f)
             status, ctype = m.get("status", status), m.get("content_type", ctype)
         except (OSError, ValueError):
             pass

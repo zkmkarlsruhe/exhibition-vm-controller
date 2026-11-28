@@ -12,7 +12,7 @@ YAML files, environment variables, and validation.
 
 import logging
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Literal
 
 import yaml
 from pydantic import Field, field_validator
@@ -113,7 +113,7 @@ class Config(BaseSettings):
         ),
     )
 
-    trusted_proxies: List[str] = Field(
+    trusted_proxies: list[str] = Field(
         default=["127.0.0.1", "::1"],
         description=(
             "IPs of reverse proxies allowed to set the real client address via X-Real-IP / "
@@ -154,7 +154,7 @@ class Config(BaseSettings):
         return v.upper() if isinstance(v, str) else v
 
     # Plugin Configuration
-    plugins: Optional[List[str]] = Field(
+    plugins: list[str] | None = Field(
         default=None,
         description=(
             "List of plugin names to load (without .py). If not set, all plugins are loaded."
@@ -192,7 +192,7 @@ class Config(BaseSettings):
         if not config_path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config_data = yaml.safe_load(f)
 
         if config_data is None:
@@ -208,20 +208,6 @@ class Config(BaseSettings):
             )
 
         return cls(**config_data)
-
-    def save_yaml(self, config_path: Path) -> None:
-        """
-        Save configuration to YAML file.
-
-        Args:
-            config_path: Path to save config.yaml
-        """
-        logger.info(f"Saving configuration to {config_path}")
-
-        config_dict = self.model_dump()
-
-        with open(config_path, "w") as f:
-            yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
 
     def configure_logging(self) -> None:
         """Configure Python logging based on config."""

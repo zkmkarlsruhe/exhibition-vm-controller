@@ -65,6 +65,21 @@ def test_operator_is_not_treated_as_a_guest(vm, monkeypatch):
     api._deny_from_vm(_req("127.0.0.1"))  # no HTTPException
 
 
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "create?snapshot_name=../x"),
+        ("POST", "create?snapshot_name=--force"),
+        ("DELETE", "--force"),
+    ],
+)
+def test_snapshot_api_rejects_unsafe_name(vm, monkeypatch, method, path):
+    monkeypatch.setattr(api, "vm_manager", vm)
+    response = TestClient(api.app).request(method, f"/api/v1/snapshot/{path}")
+    assert response.status_code == 400
+    assert "snapshot_name" in response.json()["detail"]
+
+
 def test_heartbeat_over_http_stays_refused(vm, monkeypatch):
     monkeypatch.setattr(api, "vm_manager", vm)
     with pytest.raises(api.HTTPException):

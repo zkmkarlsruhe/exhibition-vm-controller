@@ -19,4 +19,4 @@ from vm_controller.config import Config
 from vm_controller.heartbeat_monitor import HeartbeatMonitor
 from vm_controller.vm_manager import VMManager
 
-__all__ = ["VMManager", "HeartbeatMonitor", "Config"]
+__all__ = ["Config", "HeartbeatMonitor", "VMManager"]

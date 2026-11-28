@@ -56,7 +56,7 @@ def build_a_response(query):
     # header: id, flags=0x8180 (resp+RA), qd=1, an=1, ns=0, ar=0
     qid = query[:2]
     qname, qend = parse_qname(query, 12)
-    qtype, qclass = struct.unpack_from(">HH", query, qend)
+    qtype, _qclass = struct.unpack_from(">HH", query, qend)
     question = query[12 : qend + 4]
     header = qid + struct.pack(">HHHHH", 0x8180, 1, 1, 0, 0)
     answer = b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, 60, 4) + socket.inet_aton(TO_IP)
@@ -82,8 +82,8 @@ def handle(sock, data, addr):
     except (IndexError, struct.error):
         return
     if qtype == 1 and matches(qname):  # A query for a dead host
-        resp, name, _ = build_a_response(data)
-        sys.stderr.write("[dns] %s -> %s (conserved)\n" % (qname, TO_IP))
+        resp, _name, _ = build_a_response(data)
+        sys.stderr.write(f"[dns] {qname} -> {TO_IP} (conserved)\n")
         sys.stderr.flush()
         sock.sendto(resp, addr)
     else:
@@ -122,8 +122,8 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.listen, args.port))
     sys.stderr.write(
-        "dns-responder on %s:%d  -> %s for %s; else forward %s\n"
-        % (args.listen, args.port, TO_IP, "ALL" if CATCH_ALL else (HOSTS or "(none)"), UPSTREAM)
+        f"dns-responder on {args.listen}:{args.port}  -> {TO_IP} for "
+        f"{'ALL' if CATCH_ALL else (HOSTS or '(none)')}; else forward {UPSTREAM}\n"
     )
     sys.stderr.flush()
     while True:

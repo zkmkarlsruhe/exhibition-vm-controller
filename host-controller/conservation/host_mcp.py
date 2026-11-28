@@ -98,12 +98,12 @@ def guest_tools():
 
 
 def h_vm_list(a):
-    rc, out, _ = virsh("list", "--all")
+    _rc, out, _ = virsh("list", "--all")
     return {"domains": out}
 
 
 def h_vm_state(a):
-    rc, out, err = virsh("domstate", VM)
+    _rc, out, err = virsh("domstate", VM)
     return {"vm": VM, "state": out or err}
 
 
@@ -120,7 +120,8 @@ def h_vm_screenshot(a):
     rc, out, err = virsh("screenshot", VM, path)
     if rc != 0 or not os.path.exists(path):
         return {"__error__": "screenshot failed: " + (err or out)}
-    data = open(path, "rb").read()
+    with open(path, "rb") as f:
+        data = f.read()
     os.remove(path)
     return {"__image__": base64.b64encode(data).decode("ascii"), "__mime__": "image/png"}
 
@@ -136,7 +137,7 @@ def h_vm_send_key(a):
 
 
 def h_vm_snapshot_list(a):
-    rc, out, _ = virsh("snapshot-list", VM, "--name")
+    _rc, out, _ = virsh("snapshot-list", VM, "--name")
     return {"vm": VM, "snapshots": [s for s in out.splitlines() if s.strip()]}
 
 
@@ -163,7 +164,7 @@ def h_vm_snapshot(action):
 
 
 def h_vm_dumpxml(a):
-    rc, out, err = virsh("dumpxml", VM)
+    _rc, out, err = virsh("dumpxml", VM)
     return {"vm": VM, "xml": out or err}
 
 
@@ -174,7 +175,7 @@ def h_vm_net_info(a):
             "interfaces": "no connected qemu-ga channel",
             "agent_addr": resolve_agent(),
         }
-    rc, out, err = virsh("domifaddr", VM, "--source", "agent")
+    _rc, out, err = virsh("domifaddr", VM, "--source", "agent")
     return {"vm": VM, "interfaces": out or err, "agent_addr": resolve_agent()}
 
 

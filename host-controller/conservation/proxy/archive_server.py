@@ -34,7 +34,7 @@ class H(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").split(":")[0]
         hit = archive_store.lookup(ARCHIVE, host, self.path)
         if hit:
-            self._log(host, "archive %d" % hit["status"])
+            self._log(host, f"archive {hit['status']}")
             self.send_response(hit["status"])
             self.send_header("Content-Type", hit["content_type"])
             self.send_header("Content-Length", str(len(hit["body"])))
@@ -43,7 +43,7 @@ class H(BaseHTTPRequestHandler):
             if self.command != "HEAD":
                 self.wfile.write(hit["body"])
         else:
-            self._log(host, "stub %d" % STUB)
+            self._log(host, f"stub {STUB}")
             body = b"conserved: no archive entry for this host/path\n"
             self.send_response(STUB)
             self.send_header("Content-Type", "text/plain")
@@ -58,7 +58,7 @@ class H(BaseHTTPRequestHandler):
     do_POST = _serve
 
     def _log(self, host, disp):
-        line = "%s %s%s -> %s" % (self.command, host, self.path, disp)
+        line = f"{self.command} {host}{self.path} -> {disp}"
         sys.stderr.write("[archive] " + line + "\n")
         sys.stderr.flush()
         if LOGFILE:
@@ -92,7 +92,7 @@ def main():
     args = ap.parse_args()
     ARCHIVE, STUB, LOGFILE = args.archive, args.stub, args.log
     sys.stderr.write(
-        "archive-server on %s:%d  serving %s (stub %d)\n" % (args.listen, args.port, ARCHIVE, STUB)
+        f"archive-server on {args.listen}:{args.port}  serving {ARCHIVE} (stub {STUB})\n"
     )
     sys.stderr.flush()
     ThreadingHTTPServer((args.listen, args.port), H).serve_forever()

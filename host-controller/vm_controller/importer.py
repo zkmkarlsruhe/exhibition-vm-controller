@@ -35,65 +35,65 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from vmctl_core import promotion
+from vmctl_core.backends import BackendError, LibvirtBackend
 from vmctl_core.backends.process import ProcessBackend, process_path
 from vmctl_core.paths import safe_segment
+
+from vm_controller.vm_names import validate_vm_identifier
 
 logger = logging.getLogger(__name__)
 
 QEMU_NS = "http://libvirt.org/schemas/domain/qemu/1.0"
 
-Runner = Callable[[list[str]], "subprocess.CompletedProcess"]
+Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 
-def _real_run(cmd: list[str]) -> subprocess.CompletedProcess:
-    logger.info("run: %s", " ".join(cmd))
-    return subprocess.run(cmd, check=True, capture_output=True, text=True)
-
-
-def _best_effort(run: Runner, cmd: list[str]) -> None:
-    """Run a cleanup command, swallowing failures (e.g. the domain/snapshot doesn't exist)."""
+@contextmanager
+def _best_effort() -> Iterator[None]:
     try:
-        run(cmd)
-    except Exception as e:  # noqa: BLE001 — teardown must not abort the re-import
-        logger.info("teardown step skipped (%s): %s", " ".join(cmd), e)
+        yield
+    except Exception as e:
+        logger.info("teardown step skipped: %s", e)
 
 
-def _virsh(uri: str, *args: str) -> list[str]:
-    """A virsh argv pinned to ``uri``.
-
-    Without ``-c``, virsh uses the CALLER's default URI: qemu:///system for root, but
-    qemu:///session for any non-root user — a different libvirt, with its own domains. The
-    runtime controller passes ``-c`` everywhere for exactly this reason (see VMManager), and the
-    importer did not, so on a host where evmc runs as a service user the import defined the domain
-    into the session libvirt while the runtime looked for it in the system one. The exhibit then
-    never started, and a forced re-import "tore down" a domain in the session libvirt that was not
-    the one on the wall. Measured on the lab box: `virsh define` landed in qemu:///session while
-    every other artwork lives in qemu:///system.
-    """
-    return ["virsh", "-c", uri, *args]
+def _import_domain(name: str, uri: str, run: Runner | None) -> LibvirtBackend:
+    if run is None:
+        return LibvirtBackend(name, uri)
+    return LibvirtBackend(name, uri, runner=lambda argv, _timeout, _check: run(argv))
 
 
-def _teardown_domain(run: Runner, vm_name: str, ready_snapshot: str, uri: str) -> None:
-    """Tear down a previously-imported libvirt domain + its snapshots before a force re-import.
+def _teardown(domain: LibvirtBackend, ready: str) -> None:
+    # Remove the old baseline and NVRAM before replacing the disks they refer to.
+    with _best_effort():
+        domain.stop()
+    with _best_effort():
+        domain.snapshot_delete(ready, children=True, missing_ok=True)
+    with _best_effort():
+        domain.undefine(snapshots_metadata=True, nvram=True)
 
-    Removing only the install dir (disk + xml) leaves the OLD libvirt domain still defined and its
-    ``ready`` snapshot metadata dangling at paths we are about to delete — so recovery would revert
-    to a snapshot backed by a removed file, and ``snapshot-create-as`` below collides with the
-    stale snapshot. Destroy (if running), drop the ready snapshot, then undefine with snapshot +
-    nvram metadata so the redefine starts from a clean slate. All best-effort: a fresh host where
-    the domain was never defined is fine."""
-    _best_effort(run, _virsh(uri, "destroy", vm_name))
-    _best_effort(run, _virsh(uri, "snapshot-delete", vm_name, ready_snapshot, "--children"))
-    _best_effort(run, _virsh(uri, "undefine", vm_name, "--snapshots-metadata", "--nvram"))
+
+def _define_with_baseline(domain: LibvirtBackend, path: Path, ready: str) -> None:
+    domain.define(str(path))
+    try:
+        domain.snapshot_create(
+            ready, description="evmc import baseline", replace=False, timeout=120
+        )
+    except BackendError as e:
+        # A domain without its ready snapshot cannot self-recover.
+        raise BundleImportError(
+            f"ready-snapshot '{ready}' could not be created for VM "
+            f"'{domain.name}' ({e}); refusing to import an exhibit with no recovery "
+            f"baseline. Fix the host/libvirt state and re-import."
+        ) from e
 
 
 class ImportConfig(BaseSettings):
@@ -122,7 +122,7 @@ class ImportConfig(BaseSettings):
         default="qemu:///system",
         description=(
             "The libvirt the domain is defined in. MUST be the one the runtime controller "
-            "connects to (VMManager's default is the same string) — see the note on _virsh()"
+            "connects to (VMManager's default is the same string)"
         ),
     )
     vm_startup_heartbeat_delay: float = Field(
@@ -199,7 +199,7 @@ def _rewrite_domain(xml_text: str, *, vm_name: str, disk_paths: list[Path]) -> s
             f"domain has {len(disks)} disk(s) but the bundle provides {len(disk_paths)}; "
             "refusing to mis-wire"
         )
-    for disk, path in zip(disks, disk_paths):
+    for disk, path in zip(disks, disk_paths, strict=False):
         src = disk.find("source")
         if src is None:
             src = ET.SubElement(disk, "source")
@@ -234,6 +234,12 @@ def plan_import(bundle_root: Path, cfg: ImportConfig) -> ImportPlan:
         or vm.get("ready_snapshot")
         or "ready"
     )
+
+    try:
+        validate_vm_identifier(vm_name, field="vm_name")
+        validate_vm_identifier(ready, field="snapshot_name")
+    except ValueError as e:
+        raise BundleImportError(str(e)) from e
 
     install_dir = Path(cfg.install_root) / artwork_id
     is_process = vm.get("backend") == "process"
@@ -272,34 +278,44 @@ def plan_import(bundle_root: Path, cfg: ImportConfig) -> ImportPlan:
     if conservation.get("included") and (bundle_root / "conservation" / "archive").is_dir():
         plan.archive_dir = Path(cfg.archive_dir) / artwork_id
 
-    if is_process:
-        try:
-            safe_segment(ready, field="snapshot_name")
-        except ValueError as e:
-            raise BundleImportError(str(e)) from e
-        return plan
+    if vm and not is_process:
+        xml = _domain_template(bundle_root, vm)
 
-    plan.commands = [
-        _virsh(cfg.libvirt_uri, "define", str(plan.domain_path)),
-        # the imported VM is shut off — a plain internal snapshot is the pristine
-        # revert target the runtime reverts to; --disk-only/--atomic are for LIVE VMs.
-        _virsh(
-            cfg.libvirt_uri,
-            "snapshot-create-as",
-            vm_name,
-            ready,
-            "--description",
-            "evmc import baseline",
-        ),
-    ]
+        def record(argv: list[str]) -> subprocess.CompletedProcess[str]:
+            plan.commands.append(argv)
+            return subprocess.CompletedProcess(argv, 0, xml if argv[3] == "dumpxml" else "", "")
+
+        # The backend picks architecture-specific snapshot flags from the domain XML.
+        domain = _import_domain(vm_name, cfg.libvirt_uri, record)
+        _define_with_baseline(domain, plan.domain_path, ready)
     return plan
+
+
+def _domain_template(root: Path, vm: dict) -> str:
+    try:
+        tmpl = promotion.bundle_path(root, vm.get("domain_template") or "vm/domain.template.xml")
+    except ValueError as e:
+        raise BundleImportError(str(e)) from e
+    if not tmpl.is_file():
+        raise BundleImportError(f"bundle declares a VM but has no domain template: {tmpl}")
+    return tmpl.read_text()
+
+
+def _libvirt_files(root: Path, vm: dict, plan: ImportPlan) -> tuple[list[tuple[Path, Path]], str]:
+    try:
+        disks = [(promotion.bundle_path(root, rel), dest) for rel, dest in plan.disks]
+    except ValueError as e:
+        raise BundleImportError(str(e)) from e
+    return disks, _rewrite_domain(
+        _domain_template(root, vm), vm_name=plan.vm_name, disk_paths=plan.disk_paths
+    )
 
 
 def import_bundle(
     zip_path: str | Path,
     cfg: ImportConfig | None = None,
     *,
-    run: Runner = _real_run,
+    run: Runner | None = None,
     dry_run: bool = False,
     force: bool = False,
     staging: str | Path | None = None,
@@ -337,6 +353,7 @@ def import_bundle(
 
         # domain rewrite is pure; do it before any filesystem mutation so a bad
         # domain fails the import cleanly with nothing half-installed.
+        domain = None
         domain_xml = None
         host_notes: list[str] = []
         if is_process:
@@ -345,12 +362,8 @@ def import_bundle(
                 if not process_path(root / "vm", name).is_file():
                     raise BundleImportError(f"process payload missing: {name}")
         elif vm:
-            tmpl = root / (vm.get("domain_template") or "vm/domain.template.xml")
-            if not tmpl.is_file():
-                raise BundleImportError(f"bundle declares a VM but has no domain template: {tmpl}")
-            domain_xml = _rewrite_domain(
-                tmpl.read_text(), vm_name=plan.vm_name, disk_paths=plan.disk_paths
-            )
+            domain = _import_domain(plan.vm_name, cfg.libvirt_uri, run)
+            disks, domain_xml = _libvirt_files(root, vm, plan)
             # host firmware the baked image can't carry (macOS: OVMF). Warn, don't fail —
             # a curator may install it after import; but surface it loudly.
             for req in plan.host_requires:
@@ -397,18 +410,18 @@ def import_bundle(
                 )
             else:
                 staged.mkdir(parents=True, exist_ok=True)
-                for rel, dest in plan.disks:
-                    shutil.copy2(root / rel, staged / dest.name)
+                for src, dest in disks:
+                    shutil.copy2(src, staged / dest.name)
 
         if plan.install_dir.exists() and force:
             # The libvirt domain + its ready snapshot must go before the redefine (see
-            # _teardown_domain). Note this is NOT reversible: snapshot-delete removes the
+            # _teardown). Note this is NOT reversible: snapshot-delete removes the
             # internal snapshot from the qcow2 itself, so the old recovery baseline is gone
             # either way — which is why the disks are staged before we get here.
             if is_process:
                 ProcessBackend(plan.vm_name, instance_dir=plan.install_dir).stop()
-            elif vm:
-                _teardown_domain(run, plan.vm_name, plan.ready_snapshot, cfg.libvirt_uri)
+            elif domain:
+                _teardown(domain, plan.ready_snapshot)
             retired = plan.install_dir.with_name(plan.install_dir.name + ".replaced")
             shutil.rmtree(retired, ignore_errors=True)
             plan.install_dir.rename(retired)
@@ -419,36 +432,14 @@ def import_bundle(
         else:
             plan.install_dir.mkdir(parents=True, exist_ok=True)
 
-        if vm and not is_process:
+        if domain:
             assert staged is not None
             for _rel, dest in plan.disks:
                 shutil.move(str(staged / dest.name), str(dest))
             shutil.rmtree(staged, ignore_errors=True)
             staged = None
             plan.domain_path.write_text(domain_xml or "")
-            run(_virsh(cfg.libvirt_uri, "define", str(plan.domain_path)))
-            try:
-                # imported VM is shut off -> plain internal snapshot as the revert target
-                run(
-                    _virsh(
-                        cfg.libvirt_uri,
-                        "snapshot-create-as",
-                        plan.vm_name,
-                        plan.ready_snapshot,
-                        "--description",
-                        "evmc import baseline",
-                    )
-                )
-            except subprocess.CalledProcessError as e:
-                # FAIL CLOSED: the 'ready' snapshot IS the recovery baseline the runtime reverts
-                # to. An import that defined a domain with no baseline would put an exhibit on the
-                # floor that can never self-recover — yet the old code swallowed this into a note
-                # and still reported imported:True. Refuse the import instead.
-                raise BundleImportError(
-                    f"ready-snapshot '{plan.ready_snapshot}' could not be created for VM "
-                    f"'{plan.vm_name}' ({e}); refusing to import an exhibit with no recovery "
-                    f"baseline. Fix the host/libvirt state and re-import."
-                ) from e
+            _define_with_baseline(domain, plan.domain_path, plan.ready_snapshot)
 
         if plan.plugin_dir is not None:
             if plan.plugin_dir.exists():

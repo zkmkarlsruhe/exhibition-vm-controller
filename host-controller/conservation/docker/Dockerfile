@@ -1,7 +1,7 @@
 # Conservation toolkit — everything that would otherwise "bleed" onto the host
 # lives here. Build context is the conservation/ directory.
 #   docker build -f docker/Dockerfile -t cons-toolkit .
-FROM python:3.14-slim@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b
+FROM python:3.14-slim@sha256:f57c4c23b985d95deea5bc5249e2f9c8a512b4cc9d5d3fd31900cbd2f5f0a604
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tcpdump iproute2 ca-certificates \

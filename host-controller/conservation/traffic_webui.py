@@ -123,7 +123,7 @@ async def api_start(vm: str):
     try:
         session.start(vm)
     except (ValueError, RuntimeError) as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
     return session.state()
 
 

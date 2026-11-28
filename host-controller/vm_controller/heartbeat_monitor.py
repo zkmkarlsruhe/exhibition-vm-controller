@@ -8,9 +8,11 @@ License: MIT
 """
 
 import asyncio
+import contextlib
 import logging
 import time
-from typing import Callable, Optional, Protocol
+from collections.abc import Callable
+from typing import Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ class HeartbeatMonitor:
         self,
         timeout: float = 15.0,
         check_interval: float = 0.5,
-        on_timeout_callback: Optional[Callable] = None,
+        on_timeout_callback: Callable | None = None,
         # Typed as the VMManager surface this monitor actually uses (is_running), not `object`:
         # `object` made the attribute unusable to the type checker, so a rename or a signature
         # change on the other side would land here as a runtime AttributeError instead.
@@ -49,10 +51,10 @@ class HeartbeatMonitor:
         self.vm_manager = vm_manager
         self.recovery_backoff = recovery_backoff
 
-        self.last_heartbeat: Optional[float] = None
+        self.last_heartbeat: float | None = None
         self._enabled = False
         self._has_received_heartbeat = False
-        self._check_task: Optional[asyncio.Task] = None
+        self._check_task: asyncio.Task | None = None
 
         # Monotonically increasing token bumped on every disable(). A deferred re-arm
         # (post-boot delay in the API, or the post-recovery re-arm) captures the token
@@ -160,10 +162,8 @@ class HeartbeatMonitor:
         logger.info("Stopping heartbeat monitoring loop")
         if self._check_task is not None and not self._check_task.done():
             self._check_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._check_task
-            except asyncio.CancelledError:
-                pass
         self._check_task = None
 
     def _in_recovery_cooldown(self) -> bool:
@@ -198,17 +198,16 @@ class HeartbeatMonitor:
                 return
 
         # Check heartbeat timeout
-        if self.is_timed_out():
-            if not self._in_recovery_cooldown():
-                # is_timed_out() returned True, which means last_heartbeat is set — but say so
-                # locally so the arithmetic is provably safe rather than safe-by-caller.
-                since = time.monotonic() - (self.last_heartbeat or time.monotonic())
-                logger.error(f"Heartbeat timeout: {since:.1f}s (threshold: {self.timeout}s)")
-                self._last_recovery_attempt = time.monotonic()
-                await self._trigger_recovery()
-                # Restamp AFTER recovery so the backoff window covers a slow restart+ready wait
-                # (see the VM-state branch above) — no immediate second revert on a slow boot.
-                self._last_recovery_attempt = time.monotonic()
+        if self.is_timed_out() and not self._in_recovery_cooldown():
+            # is_timed_out() returned True, which means last_heartbeat is set — but say so
+            # locally so the arithmetic is provably safe rather than safe-by-caller.
+            since = time.monotonic() - (self.last_heartbeat or time.monotonic())
+            logger.error(f"Heartbeat timeout: {since:.1f}s (threshold: {self.timeout}s)")
+            self._last_recovery_attempt = time.monotonic()
+            await self._trigger_recovery()
+            # Restamp AFTER recovery so the backoff window covers a slow restart+ready wait
+            # (see the VM-state branch above) — no immediate second revert on a slow boot.
+            self._last_recovery_attempt = time.monotonic()
 
     async def _monitoring_loop(self) -> None:
         # This is the SOLE recovery loop for the whole show. A single unexpected exception must

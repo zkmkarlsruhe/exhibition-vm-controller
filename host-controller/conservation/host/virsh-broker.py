@@ -77,7 +77,7 @@ _ADDED = []  # [(args...)] for cleanup on exit
 def _iptables(action, args):
     # sudo -n: never prompt; needs a scoped NOPASSWD sudoers rule (see deployment/)
     return subprocess.run(
-        ["sudo", "-n", "iptables", "-t", "nat", action, "PREROUTING"] + args,
+        ["sudo", "-n", "iptables", "-t", "nat", action, "PREROUTING", *args],
         capture_output=True,
         text=True,
         timeout=10,
@@ -88,7 +88,7 @@ def _redirect_rules(vmip, dport, to_port, proto="tcp", exclude_host=True):
     r = ["-s", vmip, "-p", proto, "--dport", str(dport)]
     if exclude_host:
         r += ["!", "-d", HOST_IP]
-    return r + ["-j", "REDIRECT", "--to-port", str(to_port)]
+    return [*r, "-j", "REDIRECT", "--to-port", str(to_port)]
 
 
 def run_network(argv):
@@ -125,7 +125,7 @@ def run_network(argv):
             "stderr": "; ".join(errs)
             + " (need the iptables NOPASSWD sudoers rule — see deployment/)",
         }
-    return {"rc": 0, "stdout": "%s ok for %s" % (cmd, vmip), "stderr": ""}
+    return {"rc": 0, "stdout": f"{cmd} ok for {vmip}", "stderr": ""}
 
 
 def _cleanup_rules():
@@ -225,8 +225,8 @@ def main():
     server = Server(args.socket, Handler)
     os.chmod(args.socket, 0o660)  # owner+group; mount into the container
     sys.stderr.write(
-        "virsh-broker listening on %s  (allow: %d subcommands%s)\n"
-        % (args.socket, len(ALLOW), ", read-only" if args.read_only else "")
+        f"virsh-broker listening on {args.socket}  (allow: {len(ALLOW)} subcommands"
+        f"{', read-only' if args.read_only else ''})\n"
     )
     sys.stderr.flush()
     try:

@@ -91,10 +91,7 @@ def tool_system_info(args):
 def tool_run_shell(args):
     command = args["command"]
     timeout = args.get("timeout", 30)
-    if IS_WINDOWS:
-        argv = ["cmd", "/c", command]
-    else:
-        argv = ["/bin/sh", "-c", command]
+    argv = ["cmd", "/c", command] if IS_WINDOWS else ["/bin/sh", "-c", command]
 
     proc = subprocess.Popen(
         argv,
@@ -198,11 +195,8 @@ def tool_read_file(args):
     path = args["path"]
     max_bytes = args.get("max_bytes", 1024 * 1024)
     binary = args.get("binary", False)
-    f = open(path, "rb")
-    try:
+    with open(path, "rb") as f:
         data = f.read(max_bytes)
-    finally:
-        f.close()
     if binary:
         return {"path": path, "bytes": len(data), "base64": base64.b64encode(data).decode("ascii")}
     return {"path": path, "bytes": len(data), "text": data.decode("utf-8", "replace")}
@@ -214,11 +208,8 @@ def tool_write_file(args):
         data = base64.b64decode(args["content"])
     else:
         data = args["content"].encode("utf-8")
-    f = open(path, "wb")
-    try:
+    with open(path, "wb") as f:
         f.write(data)
-    finally:
-        f.close()
     return {"path": path, "bytes": len(data)}
 
 

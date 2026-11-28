@@ -28,7 +28,6 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-from typing import List, Optional
 
 # The shared runtime — the SAME class both controllers use. Re-exported so
 # existing imports (`from vm_controller.plugins import PluginRegistry`) and any
@@ -49,7 +48,7 @@ class PluginRegistry(_CorePluginRegistry):
     and shell-hook fallbacks. The registration/dispatch contract is inherited
     unchanged from ``vmctl_core.plugins.PluginRegistry``."""
 
-    def __init__(self, plugins_dir: Optional[Path] = None, hooks_dir: Optional[Path] = None):
+    def __init__(self, plugins_dir: Path | None = None, hooks_dir: Path | None = None):
         super().__init__()
         self.plugins_dir = Path(plugins_dir) if plugins_dir else Path("plugins")
         self.hooks_dir = Path(hooks_dir) if hooks_dir else Path("hooks")
@@ -115,7 +114,7 @@ class PluginRegistry(_CorePluginRegistry):
 
     # --- plugin loading (dual: shared-spec dirs + legacy flat files) -------
 
-    def load_plugins(self, plugin_names: Optional[List[str]] = None) -> None:
+    def load_plugins(self, plugin_names: list[str] | None = None) -> None:
         """Load plugins from ``self.plugins_dir``.
 
         Two coexisting conventions are discovered, in this order:

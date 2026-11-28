@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.18652760-blue)](https://doi.org/10.5281/zenodo.18652760)
 
+> **Made with and by AI.** The code, tests and documentation were written by AI agents. Verified by automated tests, a CI merge gate and a conservator in the loop. [How this was made](https://vmctl.org/how-this-was-made/)
+
 A framework for the conservation and autonomous exhibition operation of historical digital artworks using virtual machines with snapshot-based error recovery.
 
 ## Overview
@@ -497,21 +499,29 @@ This project is developed at [ZKM | Center for Art and Media Karlsruhe](https://
   </picture>
 </a>
 
-## How this software was written: AI vibe-coded, on purpose
+## Made with and by AI
 
-**This codebase was written by AI agents, directed by one conservator at ZKM.** Not assisted, not
-autocompleted — the code, the tests and most of the documentation were produced by agents working
-from prompts and reviewed by a human.
+**The code, the tests and the documentation in this repository were written by AI agents, directed
+by one conservator at ZKM.** Not assisted, not autocompleted. The full statement is at
+[vmctl.org/how-this-was-made](https://vmctl.org/how-this-was-made/).
+
+**How it is verified.**
+
+- **Automated tests.** Every change runs the test suite in CI, on synthetic bytes rather than lucky
+  fixtures.
+- **A CI merge gate.** A change reaches `main` only when its full pipeline is green.
+- **A conservator in the loop.** A conservator sets every task, checks the results against real
+  artworks and decides what ships.
+- **Evidence, not assertions.** Facts are extracted deterministically and carry their evidence.
+  Coverage is reported honestly, including where a walk only got halfway. Formats we
+  reverse-engineer are written down, so a finding can be re-derived by someone who does not trust
+  us.
 
 **Why.** Media-art conservation has an enormous surface and a tiny workforce: every work is a
 different decade, a different runtime, a different undocumented format. Covering that by hand, at
-the pace works are decaying, is not something a one-person team does. The honest comparison is not
-"AI-written tool vs. hand-written tool" — it is "this tool vs. no tool", while the disks keep
+the pace works are decaying, is not something a one-person team does. The comparison is not
+"AI-written tool vs. hand-written tool". It is "this tool vs. no tool", while the disks keep
 failing.
 
-**What we do about the risk.** Facts are extracted deterministically and carry their evidence;
-coverage is reported honestly, including where a walk only got halfway; tests run on synthetic
-bytes rather than lucky fixtures; formats we reverse-engineer are written down so a finding can be
-re-derived by someone who does not trust us. Generated code still carries generated blind spots —
-so anything these tools assert about an artwork is a starting point for a conservator, never a
-verdict.
+**Limits.** Generated code still carries generated blind spots, so anything these tools assert
+about an artwork is a starting point for a conservator, never a verdict.

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from vmctl_core import promotion
-from vmctl_core.backends import ProcessBackend, ProcessSpec
+from vmctl_core.backends import BackendError, ProcessBackend, ProcessSpec
 
 from vm_controller.config import Config
 from vm_controller.importer import (
@@ -43,7 +43,7 @@ class FakeRunner:
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
 
-def _baked_zip(tmp_path: Path) -> Path:
+def _baked_zip(tmp_path: Path, domain_xml: str = DOMAIN_TMPL) -> Path:
     """Simulate: rvmc promotes thin -> catalog bakes -> a downloaded baked zip."""
     cat_dir = tmp_path / "bases"
     cat_dir.mkdir()
@@ -74,7 +74,7 @@ def _baked_zip(tmp_path: Path) -> Path:
         check=True,
         capture_output=True,
     )
-    (b / "vm" / "domain.template.xml").write_text(DOMAIN_TMPL)
+    (b / "vm" / "domain.template.xml").write_text(domain_xml)
     (b / "config").mkdir()
     promotion.write_yaml(
         b / "config" / "exhibition.config.yaml",
@@ -208,22 +208,36 @@ def test_rewrite_domain_macos_multidisk_preserves_firmware():
 # --- full import --------------------------------------------------------------
 
 
-def _verbs(calls):
-    """virsh verbs from a FakeRunner's calls, with the `-c <uri>` connection flag stripped.
-
-    Every virsh the importer runs is pinned to the configured libvirt (see importer._virsh), so
-    the verb is no longer at a fixed index. Tests care about WHICH command ran, not where the
-    flag sits — and `_uris` below covers the flag itself."""
-    out = []
-    for c in calls:
-        rest = c[3:] if c[:2] == ["virsh", "-c"] else c[1:]
-        out.append((c[0], rest[0]) if rest else (c[0],))
-    return out
-
-
-def _uris(calls):
-    """The libvirt URI every virsh call was pinned to."""
-    return {c[2] for c in calls if c[:2] == ["virsh", "-c"]}
+@pytest.mark.parametrize(
+    ("vm", "seed", "error"),
+    [
+        ({"artifact": {"path": "../../x"}}, {}, "outside"),
+        ({"profile": "baked-multi", "disks": [{"path": "/etc/x"}]}, {}, "outside"),
+        ({"domain_template": "../../x"}, {}, "outside"),
+        ({}, {"vm_name": "../x"}, "vm_name"),
+        ({}, {"snapshot_name": "../x"}, "snapshot_name"),
+        ({}, {"vm_name": "--force"}, "vm_name"),
+        ({}, {"snapshot_name": "--force"}, "snapshot_name"),
+    ],
+)
+def test_import_rejects_unsafe_bundle_input(tmp_path, vm, seed, error):
+    root = tmp_path / "work"
+    (root / "vm").mkdir(parents=True)
+    (root / "vm" / "disk.qcow2").write_bytes(b"disk")
+    (root / "vm" / "domain.template.xml").write_text(DOMAIN_TMPL)
+    (root / "config").mkdir()
+    promotion.write_yaml(root / "config" / "exhibition.config.yaml", seed)
+    promotion.write_yaml(
+        root / promotion.BUNDLE_YAML,
+        {"bundle_format": promotion.BUNDLE_FORMAT, "vm": {"profile": "baked", **vm}},
+    )
+    zpath = tmp_path / "work.zip"
+    promotion.pack_bundle_zip(root, zpath)
+    runner = FakeRunner()
+    with pytest.raises(BundleImportError, match=error):
+        import_bundle(zpath, _cfg(tmp_path), run=runner, staging=tmp_path)
+    assert runner.calls == []
+    assert not (tmp_path / "host").exists()
 
 
 @_needs_qemu
@@ -244,10 +258,11 @@ def test_import_materializes_everything(tmp_path):
     assert "backing file" not in info
     # domain defined + snapshot created via libvirt
     assert ["virsh", "-c", cfg.libvirt_uri, "define", str(inst / "domain.xml")] in runner.calls
-    assert any(("virsh", "snapshot-create-as") == v for v in _verbs(runner.calls))
+    assert any(cmd[3] == "snapshot-create-as" for cmd in runner.calls)
     # every virsh goes to the libvirt the RUNTIME will look in — without -c, a non-root service
     # user defines into qemu:///session and the runtime never finds the domain (seen on the lab box)
-    assert _uris(runner.calls) == {"qemu:///system"}
+    assert all(cmd[:3] == ["virsh", "-c", "qemu:///system"] for cmd in runner.calls)
+    assert summary["commands"] == runner.calls
     # domain xml points at the local disk, not the rvmc overlay
     dxml = (inst / "domain.xml").read_text()
     assert str(inst / "disk.qcow2") in dxml and "overlay.qcow2" not in dxml
@@ -260,12 +275,15 @@ def test_import_materializes_everything(tmp_path):
 
 @_needs_qemu
 def test_import_dry_run_touches_nothing(tmp_path):
-    zpath = _baked_zip(tmp_path)
+    ppc_xml = DOMAIN_TMPL.replace("<devices>", "<os><type arch='ppc'>hvm</type></os><devices>")
+    zpath = _baked_zip(tmp_path, ppc_xml)
     cfg = _cfg(tmp_path)
     runner = FakeRunner()
     summary = import_bundle(zpath, cfg, run=runner, dry_run=True)
 
     assert summary["dry_run"] is True and summary.get("planned") is True
+    create = summary["commands"][-1]
+    assert create[3] == "snapshot-create-as" and "--atomic" not in create
     assert runner.calls == []  # no libvirt touched
     assert not Path(cfg.install_root).exists()
 
@@ -283,44 +301,67 @@ def test_import_refuses_existing_without_force(tmp_path):
 
 
 @_needs_qemu
-def test_force_reimport_tears_down_stale_domain(tmp_path):
+@pytest.mark.parametrize("injected", [False, True])
+def test_force_reimport_tears_down_stale_domain(tmp_path, monkeypatch, injected):
     # HIGH bug 4: force re-import removed the install dir but left the OLD libvirt domain +
     # 'ready' snapshot defined, dangling at deleted paths. The teardown must undefine the domain
     # and drop its snapshots BEFORE redefining.
     zpath = _baked_zip(tmp_path)
     cfg = _cfg(tmp_path)
+    uri = cfg.libvirt_uri = "test:///exhibition"
     import_bundle(zpath, cfg, run=FakeRunner())  # first import defines the domain
+    domain = Path(cfg.install_root) / "work-1.0.0"
+    calls = []
 
-    runner = FakeRunner()
-    import_bundle(zpath, cfg, run=runner, force=True)
-    subs = _verbs(runner.calls)
+    def run(cmd, **kwargs):
+        if injected:
+            assert not kwargs
+        else:
+            assert kwargs["env"]["LC_ALL"] == kwargs["env"]["LANG"] == "C"
+            assert kwargs["timeout"] == (120 if cmd[3] == "snapshot-create-as" else 30)
+        assert cmd[:3] == ["virsh", "-c", uri]
+        if cmd[3] == "destroy":
+            assert (domain.with_name(domain.name + ".incoming") / "disk.qcow2").is_file()
+        if cmd[3] == "define":
+            assert Path(cmd[4]).is_file()
+        calls.append(cmd[3:])
+        if cmd[3] == "destroy":
+            return subprocess.CompletedProcess(cmd, 1, "", "already gone")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    assert ("virsh", "undefine") in subs
-    assert ("virsh", "snapshot-delete") in subs
-    assert ("virsh", "destroy") in subs
-    # teardown happens before the domain is (re)defined
-    assert subs.index(("virsh", "undefine")) < subs.index(("virsh", "define"))
-    # ...and it tears down in the SAME libvirt it defines into. A teardown on the wrong URI
-    # "succeeds" against a domain that is not the one on the wall, best-effort and silent.
-    assert _uris(runner.calls) == {"qemu:///system"}
+    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
+    monkeypatch.setenv("LANG", "de_DE.UTF-8")
+    monkeypatch.setattr(subprocess, "run", run)
+    import_bundle(zpath, cfg, run=run if injected else None, force=True)
+    vm = "CYF-Work"
+    assert calls == [
+        ["destroy", vm],
+        ["snapshot-delete", vm, "ready", "--children"],
+        ["dumpxml", vm],
+        ["undefine", vm, "--snapshots-metadata", "--nvram"],
+        ["define", str(domain / "domain.xml")],
+        ["dumpxml", vm],
+        ["snapshot-create-as", vm, "ready", "--description", "evmc import baseline", "--atomic"],
+    ]
 
 
 @_needs_qemu
-def test_import_fails_closed_when_ready_snapshot_cannot_be_created(tmp_path):
+@pytest.mark.parametrize("timeout", [False, True])
+def test_import_fails_closed_when_ready_snapshot_cannot_be_created(tmp_path, timeout):
     # MEDIUM bug 7: a failed 'ready' snapshot create was swallowed into a note yet the import
     # still reported imported:True — an exhibit with no recovery baseline. It must fail instead.
     zpath = _baked_zip(tmp_path)
     cfg = _cfg(tmp_path)
 
-    class _SnapFails(FakeRunner):
-        def __call__(self, cmd):
-            self.calls.append(cmd)
-            if _verbs([cmd]) == [("virsh", "snapshot-create-as")]:
-                raise subprocess.CalledProcessError(1, cmd, output="", stderr="no space")
-            return subprocess.CompletedProcess(cmd, 0, "", "")
+    def run(cmd):
+        if cmd[3] == "snapshot-create-as":
+            if timeout:
+                raise subprocess.TimeoutExpired(cmd, 120)
+            return subprocess.CompletedProcess(cmd, 1, "", "no space")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
 
     with pytest.raises(BundleImportError, match="recovery baseline"):
-        import_bundle(zpath, cfg, run=_SnapFails())
+        import_bundle(zpath, cfg, run=run)
 
 
 def _baked_multi_zip(tmp_path: Path) -> Path:
@@ -530,7 +571,7 @@ def test_force_import_restores_the_previous_install_when_the_import_fails(tmp_pa
                 raise subprocess.CalledProcessError(1, cmd, "", "libvirt says no")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(BackendError, match="libvirt says no"):
         import_bundle(zpath, cfg, run=FailingDefine(), force=True)
 
     assert install.is_dir(), "the previous install was not restored"

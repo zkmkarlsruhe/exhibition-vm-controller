@@ -1,147 +1,36 @@
 #!/usr/bin/env python3
 """Run a command inside a VM via QEMU guest agent and print output."""
 
-import base64
-import json
-import subprocess
 import sys
-import time
+
+from vmctl_core.backends import LibvirtBackend
+from vmctl_core.backends.libvirt_backend import MAX_GUEST_READ_BYTES as MAX_GUEST_READ_BYTES
+
+from guest_cli import DEFAULT_URI, guest_cli_args
 
 
-def guest_exec(vm_name: str, cmd: str, timeout: int = 10) -> tuple[int, str, str]:
+def guest_exec(
+    vm_name: str, cmd: str, timeout: float | None = None, *, uri: str = DEFAULT_URI
+) -> tuple[int, str, str]:
     """Execute cmd.exe /c <cmd> inside VM, return (exitcode, stdout, stderr)."""
-    result = subprocess.run(
-        [
-            "virsh",
-            "qemu-agent-command",
-            vm_name,
-            json.dumps(
-                {
-                    "execute": "guest-exec",
-                    "arguments": {
-                        "path": "cmd.exe",
-                        "arg": ["/c", cmd],
-                        "capture-output": True,
-                    },
-                }
-            ),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    pid = json.loads(result.stdout)["return"]["pid"]
-
-    for _ in range(timeout * 2):
-        time.sleep(0.5)
-        result = subprocess.run(
-            [
-                "virsh",
-                "qemu-agent-command",
-                vm_name,
-                json.dumps(
-                    {
-                        "execute": "guest-exec-status",
-                        "arguments": {"pid": pid},
-                    }
-                ),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        r = json.loads(result.stdout)["return"]
-        if r.get("exited"):
-            stdout = base64.b64decode(r.get("out-data", "")).decode("utf-8", errors="replace")
-            stderr = base64.b64decode(r.get("err-data", "")).decode("utf-8", errors="replace")
-            return r.get("exitcode", -1), stdout, stderr
-
-    return -1, "", "timeout"
+    backend = LibvirtBackend(vm_name, uri=uri)
+    args = ["/c", cmd]
+    if timeout is None:
+        return backend.guest_exec("cmd.exe", args)
+    return backend.guest_exec("cmd.exe", args, timeout=timeout)
 
 
-# Ceiling for the QGA read loop below: the guest decides how much it sends, so an uncapped
-# read buffers arbitrary guest data into host RAM (same guard as vmctl-core's backend).
-MAX_GUEST_READ_BYTES = 64 * 1024 * 1024
+def guest_read_file(vm_name: str, path: str, *, uri: str = DEFAULT_URI) -> bytes:
+    return LibvirtBackend(vm_name, uri=uri).guest_read_file(path)
 
 
-def guest_read_file(vm_name: str, path: str) -> bytes:
-    """Read a file from the guest via guest-file-open/read/close (capped, fail-closed)."""
-    # Open
-    result = subprocess.run(
-        [
-            "virsh",
-            "qemu-agent-command",
-            vm_name,
-            json.dumps(
-                {
-                    "execute": "guest-file-open",
-                    "arguments": {"path": path, "mode": "r"},
-                }
-            ),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    handle = json.loads(result.stdout)["return"]
-
-    # Read in chunks. Wrap in try/finally so a mid-stream read that raises (check=True) still
-    # releases the guest file handle — otherwise the handle leaks in the guest agent.
-    data = b""
-    try:
-        while True:
-            result = subprocess.run(
-                [
-                    "virsh",
-                    "qemu-agent-command",
-                    vm_name,
-                    json.dumps(
-                        {
-                            "execute": "guest-file-read",
-                            "arguments": {"handle": handle, "count": 65536},
-                        }
-                    ),
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            r = json.loads(result.stdout)["return"]
-            chunk = base64.b64decode(r.get("buf-b64", ""))
-            data += chunk
-            if len(data) > MAX_GUEST_READ_BYTES:
-                raise RuntimeError(
-                    f"guest file {path!r} exceeds the "
-                    f"{MAX_GUEST_READ_BYTES // (1024 * 1024)} MiB guest-read cap"
-                )
-            if r.get("eof", False) or not chunk:
-                break
-    finally:
-        # Close (best-effort; always runs, even if a read above raised)
-        subprocess.run(
-            [
-                "virsh",
-                "qemu-agent-command",
-                vm_name,
-                json.dumps(
-                    {
-                        "execute": "guest-file-close",
-                        "arguments": {"handle": handle},
-                    }
-                ),
-            ],
-            capture_output=True,
-            text=True,
-        )
-    return data
+def main(argv: list[str] | None = None) -> int:
+    uri, (vm, cmd) = guest_cli_args(argv, "VM", "COMMAND")
+    exitcode, stdout, stderr = guest_exec(vm, cmd, uri=uri)
+    sys.stdout.write(stdout)
+    sys.stderr.write(stderr)
+    return exitcode
 
 
 if __name__ == "__main__":
-    vm = sys.argv[1]
-    cmd = sys.argv[2]
-    exitcode, stdout, stderr = guest_exec(vm, cmd)
-    if stdout:
-        print(stdout, end="")
-    if stderr:
-        print(stderr, end="", file=sys.stderr)
-    sys.exit(exitcode)
+    sys.exit(main())

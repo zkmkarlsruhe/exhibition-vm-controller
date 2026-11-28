@@ -13,6 +13,7 @@ import types
 
 import pytest
 from fastapi import HTTPException
+from vmctl_core.backends import BackendError
 from vmctl_core.plugins.runtime import SSE_QUEUE_MAXSIZE
 
 import vm_controller.api as api
@@ -32,13 +33,7 @@ def _req(ip: str, headers: dict | None = None):
 
 
 def _virsh_parts(cmd):
-    """(subcommand, positional args) for a virsh call, whatever shape it arrives in.
-
-    VMManager shells out directly for the staged golden-snapshot refresh, but delegates the
-    rest to vmctl_core's LibvirtBackend, which passes a connection flag: `virsh -c <uri> <sub>
-    <vm> ...` instead of `virsh <sub> <vm> ...`. Tests assert on the SEQUENCE of operations,
-    not on that spelling.
-    """
+    """Extract the virsh operation so the tests can check refresh ordering."""
     if not (isinstance(cmd, list) and cmd[:1] == ["virsh"]):
         return None, []
     args = cmd[1:]
@@ -50,7 +45,8 @@ def _virsh_parts(cmd):
 class _FakeVirsh:
     """Stateful fake for subprocess.run driving VMManager's virsh shell-outs."""
 
-    def __init__(self, snaps=None, fail_create=None):
+    def __init__(self, snaps=None, fail_create=None, time_out=False):
+        self.time_out = time_out
         self.snaps = set(snaps or [])
         self.fail_create = fail_create  # snapshot name whose create-as should fail
         self.calls: list[list[str]] = []
@@ -63,9 +59,14 @@ class _FakeVirsh:
         name = rest[1] if len(rest) > 1 else None  # rest = [<vm>, <snapshot>, *flags]
         if sub == "snapshot-list":
             return subprocess.CompletedProcess(cmd, 0, "\n".join(sorted(self.snaps)) + "\n", "")
+        if sub in ("snapshot-create-as", "snapshot-delete"):
+            assert kw.get("env", {}).get("LC_ALL") == "C"
+            assert kw["timeout"] == (120 if sub == "snapshot-create-as" else 60)
         if sub == "snapshot-create-as":
             if name == self.fail_create:
-                raise subprocess.CalledProcessError(1, cmd, "", "create failed")
+                if self.time_out:
+                    raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+                return subprocess.CompletedProcess(cmd, 1, "", "create failed")
             self.snaps.add(name)
             return subprocess.CompletedProcess(cmd, 0, "", "")
         if sub == "snapshot-delete":
@@ -107,35 +108,48 @@ def test_create_snapshot_stages_before_touching_golden(monkeypatch):
 
     # golden committed, staging cleaned up
     assert fake.snaps == {"ready"}
-    creates = [c for c in fake.calls if _virsh_parts(c)[0] == "snapshot-create-as"]
-    deletes = [c for c in fake.calls if _virsh_parts(c)[0] == "snapshot-delete"]
-
-    # staging is created BEFORE the old golden is deleted
-    def _index_of(sub: str, snapshot: str) -> int:
-        for i, c in enumerate(fake.calls):
-            s_, rest = _virsh_parts(c)
-            if s_ == sub and rest[1:2] == [snapshot]:
-                return i
-        raise AssertionError(f"no {sub} call for {snapshot!r} in {fake.calls}")
-
-    staging_create = _index_of("snapshot-create-as", "ready__staging")
-    golden_delete = _index_of("snapshot-delete", "ready")
-    assert staging_create < golden_delete
-    assert creates and deletes
+    # Verify staging before retiring the golden. Recursive deletes would remove its children.
+    assert [c[3:] for c in fake.calls] == [
+        ["snapshot-delete", "testvm", "ready__staging"],
+        ["snapshot-create-as", "testvm", "ready__staging"],
+        ["snapshot-list", "testvm", "--name"],
+        ["snapshot-delete", "testvm", "ready"],
+        ["snapshot-create-as", "testvm", "ready"],
+        ["snapshot-delete", "testvm", "ready__staging"],
+    ]
 
 
-def test_create_snapshot_keeps_recovery_point_when_final_create_fails(monkeypatch):
+@pytest.mark.parametrize("time_out", [False, True])
+def test_create_snapshot_keeps_recovery_point_when_final_create_fails(monkeypatch, time_out):
     # THE FIX: if the final create fails, the verified staging snapshot is LEFT as a recovery
     # point — there is never a moment with zero ready-state snapshots.
-    fake = _FakeVirsh(snaps={"ready"}, fail_create="ready")
+    fake = _FakeVirsh(snaps={"ready"}, fail_create="ready", time_out=time_out)
     monkeypatch.setattr(subprocess, "run", fake.run)
     vm = VMManager(vm_name="testvm")
 
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(BackendError, match="ready__staging"):
         vm.create_snapshot("ready")
-
     assert "ready__staging" in fake.snaps  # recovery point survived
     assert fake.snaps, "must never end with zero snapshots"
+
+
+@pytest.mark.parametrize("time_out", [False, True])
+@pytest.mark.parametrize("name", ["ready__staging", "ready"])
+def test_snapshot_create_http_failure_detail(monkeypatch, name, time_out):
+    fake = _FakeVirsh(snaps={"ready"}, fail_create=name, time_out=time_out)
+    monkeypatch.setattr(subprocess, "run", fake.run)
+    api.vm_manager = VMManager(vm_name="testvm")
+    api.vm_manager.vm_network = "192.168.122.0/24"
+
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(api.create_snapshot(_req("127.0.0.1")))
+
+    assert failure.value.status_code == 500
+    assert failure.value.detail.startswith("Error creating snapshot: ")
+    if name == "ready":  # final create: core names the kept recovery point
+        assert "ready__staging' has been kept as a recovery point" in failure.value.detail
+    else:
+        assert ("timed out" if time_out else "failed") in failure.value.detail
 
 
 # --- bug 2: generation token stops a stale re-arm overriding an operator stop -------------------
